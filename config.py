@@ -24,18 +24,20 @@ class Config:
     sl_buffer_pct: float = 0.002  # SL을 오더블록 경계보다 0.2% 더 여유
 
     # --- EMA 파라미터 ---
-    ema_fast: int = 20
-    ema_slow: int = 50
-    ema_trend: int = 200
+    ema_trend: int = 200          # 추세 필터용 EMA200
 
-    # --- 오더블록 파라미터 ---
-    ob_lookback: int = 50         # 오더블록 탐색 범위 (캔들 수)
-    ob_body_ratio: float = 0.6    # 몸통이 전체 범위의 60% 이상이면 강한 캔들
+    # --- 슈퍼트렌드 파라미터 ---
+    st_atr_period: int = 10       # ATR 기간
+    st_multiplier: float = 3.0    # ATR 배수 (높을수록 신호 적음, 노이즈 감소)
 
-    # --- 피보나치 파라미터 ---
-    fib_swing_lookback: int = 50  # 스윙 고/저점 탐색 범위
+    # --- 오더블록 파라미터 (미사용, 호환성 유지) ---
+    ob_lookback: int = 50
+    ob_body_ratio: float = 0.6
+    fib_swing_lookback: int = 50
     fib_entry_low: float = 0.618
     fib_entry_high: float = 0.786
+    ema_fast: int = 20
+    ema_slow: int = 50
 
     # --- 실행 주기 ---
     check_interval_sec: int = 60  # 1분마다 신호 확인

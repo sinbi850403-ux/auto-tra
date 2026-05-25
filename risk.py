@@ -32,8 +32,8 @@ def calc_trade(
     risk_usd = balance * cfg.risk_pct
 
     if signal.direction == "long":
-        # SL: 오더블록 저점 - 버퍼
-        sl = signal.ob.low * (1 - cfg.sl_buffer_pct)
+        # SL: 슈퍼트렌드 라인 - 버퍼
+        sl = signal.sl_price * (1 - cfg.sl_buffer_pct)
         sl_dist = entry - sl
         if sl_dist <= 0:
             log.warning("SL 거리가 0 이하 — 롱 신호 무시")
@@ -41,8 +41,8 @@ def calc_trade(
         tp = entry + sl_dist * cfg.rr_ratio
         side = "Buy"
     else:
-        # SL: 오더블록 고점 + 버퍼
-        sl = signal.ob.high * (1 + cfg.sl_buffer_pct)
+        # SL: 슈퍼트렌드 라인 + 버퍼
+        sl = signal.sl_price * (1 + cfg.sl_buffer_pct)
         sl_dist = sl - entry
         if sl_dist <= 0:
             log.warning("SL 거리가 0 이하 — 숏 신호 무시")
