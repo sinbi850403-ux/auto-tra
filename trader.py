@@ -20,7 +20,7 @@ class Trader:
             self._min_qty = self.client.get_min_qty()
             self._qty_step = self.client.get_qty_step()
 
-    def run_cycle(self, signal=None):
+    def run_cycle(self, signal=None, balance=0.0):
         """1 사이클: 포지션 확인 → 주문. signal이 주어지면 분석 생략."""
         from strategy import analyze
 
@@ -58,5 +58,9 @@ class Trader:
             )
             order_id = resp["result"].get("orderId", "?")
             log.info("주문 완료 orderId=%s", order_id)
+            from notify import alert_entry
+            direction = "롱" if params.side == "Buy" else "숏"
+            alert_entry(direction, signal.entry_price, params.sl_price,
+                        params.tp_price, params.qty, balance)
         except Exception as e:
             log.error("주문 실패: %s", e)

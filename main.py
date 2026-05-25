@@ -9,6 +9,7 @@ import schedule
 from config import Config
 from client import BybitClient
 from trader import Trader
+from notify import alert_start, alert_error
 
 # TTY 여부 감지 — 클라우드 서버는 터미널 없음
 IS_TTY = sys.stdout.isatty()
@@ -82,7 +83,7 @@ def make_job(trader, client, cfg):
                 direction = "롱" if signal.direction == "long" else "숏"
                 STATUS["last_signal"] = f"{direction} @ ${signal.entry_price:,.2f}"
                 STATUS["last_action"] = "주문 진행 중"
-                trader.run_cycle(signal)
+                trader.run_cycle(signal, balance)
                 STATUS["last_action"] = "주문 완료"
                 if not IS_TTY:
                     log.info("신호 진입 — %s @ %.2f  잔고=$%.2f", direction, signal.entry_price, balance)
@@ -97,6 +98,7 @@ def make_job(trader, client, cfg):
             STATUS["errors"] += 1
             STATUS["last_action"] = f"오류: {str(e)[:50]}"
             log.error("사이클 오류: %s", e, exc_info=True)
+            alert_error(str(e))
 
         if IS_TTY:
             draw_dashboard(cfg)
@@ -115,6 +117,7 @@ def main():
     log.info("=== 바이비트 자동 선물 봇 시작 ===")
     log.info("심볼=%s  레버리지=%dx  리스크=%.0f%%  테스트넷=%s",
              cfg.symbol, cfg.leverage, cfg.risk_pct * 100, cfg.testnet)
+    alert_start(cfg.symbol, cfg.leverage, cfg.risk_pct)
 
     if cfg.testnet:
         log.warning("TESTNET 모드 — 실제 거래 아님")
