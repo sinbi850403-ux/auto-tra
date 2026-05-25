@@ -1,7 +1,6 @@
 """Bybit V5 API 래퍼 — 봇에 필요한 기능만 노출."""
 import logging
 from typing import Optional
-import pandas as pd
 from pybit.unified_trading import HTTP
 from config import Config
 
@@ -39,8 +38,8 @@ class BybitClient:
     # 시세 데이터
     # ------------------------------------------------------------------ #
 
-    def get_klines(self) -> pd.DataFrame:
-        """15분봉 캔들 DataFrame 반환. 컬럼: open, high, low, close, volume."""
+    def get_klines(self) -> list:
+        """15분봉 캔들 list[dict] 반환. 키: ts, open, high, low, close, volume."""
         resp = self.session.get_kline(
             category="linear",
             symbol=self.cfg.symbol,
@@ -48,13 +47,19 @@ class BybitClient:
             limit=self.cfg.candle_limit,
         )
         raw = resp["result"]["list"]
-        df = pd.DataFrame(raw, columns=["ts", "open", "high", "low", "close", "volume", "turnover"])
-        df = df.astype({"ts": "int64", "open": float, "high": float,
-                        "low": float, "close": float, "volume": float})
-        df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-        df.sort_values("ts", inplace=True)
-        df.reset_index(drop=True, inplace=True)
-        return df
+        candles = [
+            {
+                "ts":     int(r[0]),
+                "open":   float(r[1]),
+                "high":   float(r[2]),
+                "low":    float(r[3]),
+                "close":  float(r[4]),
+                "volume": float(r[5]),
+            }
+            for r in raw
+        ]
+        candles.sort(key=lambda c: c["ts"])
+        return candles
 
     def get_balance(self) -> float:
         """USDT 사용 가능 잔고 반환. 계정 타입 자동 감지."""
