@@ -1,10 +1,26 @@
 """Bybit V5 API 래퍼 — 봇에 필요한 기능만 노출."""
 import logging
+import time
 from typing import Optional
 from pybit.unified_trading import HTTP
 from config import Config
 
 log = logging.getLogger(__name__)
+
+
+def _safe_call(fn, retries=3, delay=5):
+    """Rate Limit 오류 시 재시도."""
+    for i in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if "rate limit" in msg.lower() or "x-bapi-limit" in msg.lower() or "10006" in msg:
+                log.warning("Rate Limit — %d초 후 재시도 (%d/%d)", delay, i+1, retries)
+                time.sleep(delay)
+            else:
+                raise
+    raise Exception("Rate Limit 재시도 초과")
 
 
 class BybitClient:
@@ -40,12 +56,12 @@ class BybitClient:
 
     def get_klines(self) -> list:
         """15분봉 캔들 list[dict] 반환. 키: ts, open, high, low, close, volume."""
-        resp = self.session.get_kline(
+        resp = _safe_call(lambda: self.session.get_kline(
             category="linear",
             symbol=self.cfg.symbol,
             interval=self.cfg.interval,
             limit=self.cfg.candle_limit,
-        )
+        ))
         raw = resp["result"]["list"]
         candles = [
             {
@@ -65,7 +81,7 @@ class BybitClient:
         """USDT 사용 가능 잔고 반환. 계정 타입 자동 감지."""
         for account_type in ("UNIFIED", "CONTRACT"):
             try:
-                resp = self.session.get_wallet_balance(accountType=account_type, coin="USDT")
+                resp = _safe_call(lambda: self.session.get_wallet_balance(accountType=account_type, coin="USDT"))
                 coins = resp["result"]["list"][0]["coin"]
                 for c in coins:
                     if c["coin"] == "USDT":
