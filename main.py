@@ -40,7 +40,10 @@ BOLD   = "\033[1m"
 
 
 def clear():
-    os.system("cls" if os.name == "nt" else "clear")
+    try:
+        os.system("cls" if os.name == "nt" else "clear")
+    except Exception:
+        pass
 
 
 def draw_dashboard(cfg: Config):
@@ -131,9 +134,11 @@ def main():
         print(f"{RED}설정 오류: {e}{RESET}")
         sys.exit(1)
 
-    # Windows 콘솔 컬러 활성화
     if os.name == "nt":
-        os.system("color")
+        try:
+            os.system("color")
+        except Exception:
+            pass
 
     client = BybitClient(cfg)
     trader = Trader(client, cfg)
