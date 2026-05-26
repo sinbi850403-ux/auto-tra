@@ -17,6 +17,12 @@ class Config:
     interval: str = "15"          # 15분봉
     candle_limit: int = 300       # 전략 계산에 필요한 캔들 수
 
+    # --- 멀티 종목 스캐너 ---
+    scan_symbols: list = field(default_factory=lambda: [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+        "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+    ])
+
     # --- 레버리지 & 리스크 ---
     leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "20")))
     risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.20")))

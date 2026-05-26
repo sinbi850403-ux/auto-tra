@@ -21,15 +21,17 @@ def send(text: str):
 
 
 def alert_entry(direction: str, entry: float, sl: float, tp: float,
-                qty: float, balance: float):
+                qty: float, balance: float, symbol: str = "BTCUSDT"):
     emoji = "🟢" if direction == "롱" else "🔴"
+    coin = symbol.replace("USDT", "")
     send(
         f"{emoji} <b>진입 신호</b>\n"
+        f"종목: {coin}/USDT\n"
         f"방향: {direction}\n"
         f"진입가: ${entry:,.2f}\n"
         f"SL: ${sl:,.2f}\n"
         f"TP: ${tp:,.2f}\n"
-        f"수량: {qty} BTC\n"
+        f"수량: {qty} {coin}\n"
         f"잔고: ${balance:.2f} USDT"
     )
 
@@ -58,10 +60,14 @@ def alert_error(msg: str):
     send(f"⚠️ <b>봇 오류</b>\n{msg[:200]}")
 
 
-def alert_start(symbol: str, leverage: int, risk_pct: float):
+def alert_start(symbol: str, leverage: int, risk_pct: float, scan_count: int = 1):
+    if scan_count > 1:
+        symbol_text = f"상위 {scan_count}종목 스캔"
+    else:
+        symbol_text = symbol
     send(
         f"🤖 <b>오토선물봇 시작</b>\n"
-        f"심볼: {symbol}\n"
+        f"심볼: {symbol_text}\n"
         f"레버리지: {leverage}x\n"
         f"리스크: {risk_pct*100:.0f}%\n"
         f"전략: MTF 슈퍼트렌드 (1H+15M+EMA200)"

@@ -38,28 +38,30 @@ class BybitClient:
     # ------------------------------------------------------------------ #
 
     def _init_leverage(self):
-        try:
-            self.session.set_leverage(
-                category="linear",
-                symbol=self.cfg.symbol,
-                buyLeverage=str(self.cfg.leverage),
-                sellLeverage=str(self.cfg.leverage),
-            )
-            log.info("레버리지 %dx 설정 완료 (%s)", self.cfg.leverage, self.cfg.symbol)
-        except Exception as e:
-            # 이미 설정된 경우 Bybit이 에러를 반환하므로 무시
-            log.debug("레버리지 설정 스킵 (이미 설정됨): %s", e)
+        for sym in self.cfg.scan_symbols:
+            try:
+                self.session.set_leverage(
+                    category="linear",
+                    symbol=sym,
+                    buyLeverage=str(self.cfg.leverage),
+                    sellLeverage=str(self.cfg.leverage),
+                )
+                log.debug("레버리지 %dx 설정 (%s)", self.cfg.leverage, sym)
+            except Exception:
+                pass
+        log.info("레버리지 %dx 설정 완료 (전 종목)", self.cfg.leverage)
 
     # ------------------------------------------------------------------ #
     # 시세 데이터
     # ------------------------------------------------------------------ #
 
-    def get_klines(self, interval: str = None) -> list:
-        """15분봉 캔들 list[dict] 반환. 키: ts, open, high, low, close, volume."""
-        iv = interval or self.cfg.interval
+    def get_klines(self, interval: str = None, symbol: str = None) -> list:
+        """캔들 list[dict] 반환. 키: ts, open, high, low, close, volume."""
+        iv  = interval or self.cfg.interval
+        sym = symbol   or self.cfg.symbol
         resp = _safe_call(lambda: self.session.get_kline(
             category="linear",
-            symbol=self.cfg.symbol,
+            symbol=sym,
             interval=iv,
             limit=self.cfg.candle_limit,
         ))
@@ -99,30 +101,37 @@ class BybitClient:
     # 포지션
     # ------------------------------------------------------------------ #
 
-    def get_position(self) -> Optional[dict]:
+    def get_position(self, symbol: str = None) -> Optional[dict]:
         """현재 열린 포지션 반환. 없으면 None."""
-        resp = self.session.get_positions(
-            category="linear",
-            symbol=self.cfg.symbol,
-        )
-        positions = resp["result"]["list"]
-        for p in positions:
+        sym = symbol or self.cfg.symbol
+        resp = self.session.get_positions(category="linear", symbol=sym)
+        for p in resp["result"]["list"]:
             if float(p["size"]) > 0:
                 return p
+        return None
+
+    def get_any_position(self) -> Optional[dict]:
+        """전체 종목 중 열린 포지션 하나 반환."""
+        for sym in self.cfg.scan_symbols:
+            pos = self.get_position(sym)
+            if pos:
+                return pos
         return None
 
     # ------------------------------------------------------------------ #
     # 주문
     # ------------------------------------------------------------------ #
 
-    def place_order(self, side: str, qty: float, sl_price: float, tp_price: float) -> dict:
+    def place_order(self, side: str, qty: float, sl_price: float, tp_price: float,
+                    symbol: str = None) -> dict:
         """
         시장가 주문 + SL/TP 동시 설정.
         side: "Buy" | "Sell"
         """
+        sym = symbol or self.cfg.symbol
         resp = self.session.place_order(
             category="linear",
-            symbol=self.cfg.symbol,
+            symbol=sym,
             side=side,
             orderType="Market",
             qty=str(qty),
@@ -151,9 +160,10 @@ class BybitClient:
         )
         log.info("포지션 청산 — %s %s", close_side, qty)
 
-    def get_ticker(self) -> float:
+    def get_ticker(self, symbol: str = None) -> float:
         """현재 마크 가격 반환."""
-        resp = _safe_call(lambda: self.session.get_tickers(category="linear", symbol=self.cfg.symbol))
+        sym = symbol or self.cfg.symbol
+        resp = _safe_call(lambda: self.session.get_tickers(category="linear", symbol=sym))
         return float(resp["result"]["list"][0]["markPrice"])
 
     def get_last_closed_pnl(self) -> Optional[dict]:
@@ -171,14 +181,16 @@ class BybitClient:
             log.warning("청산 내역 조회 실패: %s", e)
         return None
 
-    def get_min_qty(self) -> float:
+    def get_min_qty(self, symbol: str = None) -> float:
         """심볼의 최소 주문 수량 반환."""
-        resp = self.session.get_instruments_info(category="linear", symbol=self.cfg.symbol)
+        sym = symbol or self.cfg.symbol
+        resp = self.session.get_instruments_info(category="linear", symbol=sym)
         lot = resp["result"]["list"][0]["lotSizeFilter"]
         return float(lot["minOrderQty"])
 
-    def get_qty_step(self) -> float:
+    def get_qty_step(self, symbol: str = None) -> float:
         """수량 스텝 (소수점 자릿수) 반환."""
-        resp = self.session.get_instruments_info(category="linear", symbol=self.cfg.symbol)
+        sym = symbol or self.cfg.symbol
+        resp = self.session.get_instruments_info(category="linear", symbol=sym)
         lot = resp["result"]["list"][0]["lotSizeFilter"]
         return float(lot["qtyStep"])

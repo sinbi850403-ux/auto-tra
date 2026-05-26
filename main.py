@@ -72,9 +72,9 @@ def make_job(trader, client, cfg):
     def job():
         STATUS["cycle"] += 1
         try:
-            price   = client.get_ticker()
+            price   = client.get_ticker()        # BTC 기준 가격 표시용
             balance = client.get_balance()
-            pos     = client.get_position()
+            pos     = client.get_any_position()  # 전체 종목 포지션 확인
             prev    = STATUS["prev_position"]
             STATUS.update({"price": price, "balance": balance,
                            "position": pos, "prev_position": pos})
@@ -83,10 +83,10 @@ def make_job(trader, client, cfg):
             if prev and not pos:
                 closed = client.get_last_closed_pnl()
                 if closed:
-                    pnl        = float(closed.get("closedPnl", 0))
-                    exit_price = float(closed.get("avgExitPrice", price))
+                    pnl         = float(closed.get("closedPnl", 0))
+                    exit_price  = float(closed.get("avgExitPrice", price))
                     entry_price = float(closed.get("avgEntryPrice", price))
-                    direction  = "롱" if closed.get("side") == "Buy" else "숏"
+                    direction   = "롱" if closed.get("side") == "Buy" else "숏"
                     if pnl >= 0:
                         alert_tp(direction, entry_price, exit_price, pnl)
                         log.info("TP 달성 — PnL=+$%.2f", pnl)
@@ -94,24 +94,41 @@ def make_job(trader, client, cfg):
                         alert_sl(direction, entry_price, exit_price, pnl)
                         log.info("SL 손절 — PnL=$%.2f", pnl)
 
-            candles    = client.get_klines()
-            candles_1h = client.get_klines(interval=cfg.htf_interval)
-            signal     = analyze(candles, cfg, candles_1h)
-
-            if signal:
-                direction = "롱" if signal.direction == "long" else "숏"
-                STATUS["last_signal"] = f"{direction} @ ${signal.entry_price:,.2f}"
-                STATUS["last_action"] = "주문 진행 중"
-                trader.run_cycle(signal, balance)
-                STATUS["last_action"] = "주문 완료"
+            # 이미 포지션 있으면 스캔 생략
+            if pos:
+                STATUS["last_signal"] = f"포지션 유지 ({pos['symbol']} {pos['side']})"
+                STATUS["last_action"] = "홀딩 중"
                 if not IS_TTY:
-                    log.info("신호 진입 — %s @ %.2f  잔고=$%.2f", direction, signal.entry_price, balance)
+                    log.info("포지션 유지 — %s %s  잔고=$%.2f",
+                             pos["symbol"], pos["side"], balance)
             else:
-                STATUS["last_signal"] = "없음 (조건 미충족)"
-                STATUS["last_action"] = "대기 중"
-                if not IS_TTY:
-                    log.info("신호 없음 — BTC=%.2f  잔고=$%.2f  포지션=%s",
-                             price, balance, pos["side"] if pos else "없음")
+                # 상위 10종목 스캔 — 첫 신호 종목 진입
+                found_signal = False
+                for sym in cfg.scan_symbols:
+                    try:
+                        candles_15m = client.get_klines(symbol=sym)
+                        candles_1h  = client.get_klines(interval=cfg.htf_interval, symbol=sym)
+                        signal      = analyze(candles_15m, cfg, candles_1h)
+                    except Exception as scan_err:
+                        log.warning("스캔 실패 (%s): %s", sym, scan_err)
+                        continue
+
+                    if signal:
+                        direction = "롱" if signal.direction == "long" else "숏"
+                        STATUS["last_signal"] = f"{sym} {direction} @ ${signal.entry_price:,.2f}"
+                        STATUS["last_action"] = "주문 진행 중"
+                        log.info("신호 발견 — %s %s @ %.2f", sym, direction, signal.entry_price)
+                        trader.run_cycle(signal, balance, symbol=sym)
+                        STATUS["last_action"] = "주문 완료"
+                        found_signal = True
+                        break   # 한 종목만 진입
+
+                if not found_signal:
+                    STATUS["last_signal"] = f"없음 (10종목 스캔 완료)"
+                    STATUS["last_action"] = "대기 중"
+                    if not IS_TTY:
+                        log.info("신호 없음 — BTC=%.2f  잔고=$%.2f  포지션=없음",
+                                 price, balance)
 
         except Exception as e:
             STATUS["errors"] += 1
@@ -136,7 +153,7 @@ def main():
     log.info("=== 바이비트 자동 선물 봇 시작 ===")
     log.info("심볼=%s  레버리지=%dx  리스크=%.0f%%  테스트넷=%s",
              cfg.symbol, cfg.leverage, cfg.risk_pct * 100, cfg.testnet)
-    alert_start(cfg.symbol, cfg.leverage, cfg.risk_pct)
+    alert_start(cfg.symbol, cfg.leverage, cfg.risk_pct, scan_count=len(cfg.scan_symbols))
 
     if cfg.testnet:
         log.warning("TESTNET 모드 — 실제 거래 아님")
