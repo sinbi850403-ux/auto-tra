@@ -28,7 +28,9 @@ class Config:
 
     # --- 슈퍼트렌드 파라미터 ---
     st_atr_period: int = 10       # ATR 기간
-    st_multiplier: float = 2.0    # ATR 배수 (낮을수록 신호 많음)
+    st_multiplier: float = 2.0    # 15분봉 배수
+    st_htf_multiplier: float = 3.0  # 1시간봉 배수 (노이즈 필터 강하게)
+    htf_interval: str = "60"      # 상위 타임프레임 (1시간봉)
 
     # --- 오더블록 파라미터 (미사용, 호환성 유지) ---
     ob_lookback: int = 50

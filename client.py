@@ -54,12 +54,13 @@ class BybitClient:
     # 시세 데이터
     # ------------------------------------------------------------------ #
 
-    def get_klines(self) -> list:
+    def get_klines(self, interval: str = None) -> list:
         """15분봉 캔들 list[dict] 반환. 키: ts, open, high, low, close, volume."""
+        iv = interval or self.cfg.interval
         resp = _safe_call(lambda: self.session.get_kline(
             category="linear",
             symbol=self.cfg.symbol,
-            interval=self.cfg.interval,
+            interval=iv,
             limit=self.cfg.candle_limit,
         ))
         raw = resp["result"]["list"]

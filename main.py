@@ -94,8 +94,9 @@ def make_job(trader, client, cfg):
                         alert_sl(direction, entry_price, exit_price, pnl)
                         log.info("SL 손절 — PnL=$%.2f", pnl)
 
-            candles = client.get_klines()
-            signal  = analyze(candles, cfg)
+            candles    = client.get_klines()
+            candles_1h = client.get_klines(interval=cfg.htf_interval)
+            signal     = analyze(candles, cfg, candles_1h)
 
             if signal:
                 direction = "롱" if signal.direction == "long" else "숏"

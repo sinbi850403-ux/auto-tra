@@ -64,5 +64,5 @@ def alert_start(symbol: str, leverage: int, risk_pct: float):
         f"심볼: {symbol}\n"
         f"레버리지: {leverage}x\n"
         f"리스크: {risk_pct*100:.0f}%\n"
-        f"전략: 슈퍼트렌드 + EMA200"
+        f"전략: MTF 슈퍼트렌드 (1H+15M+EMA200)"
     )
