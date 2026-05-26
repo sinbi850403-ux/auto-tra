@@ -9,7 +9,7 @@ import schedule
 from config import Config
 from client import BybitClient
 from trader import Trader
-from notify import alert_start, alert_error
+from notify import alert_start, alert_error, alert_tp, alert_sl
 
 # TTY 여부 감지 — 클라우드 서버는 터미널 없음
 IS_TTY = sys.stdout.isatty()
@@ -33,6 +33,7 @@ STATUS = {
     "balance": 0.0, "price": 0.0, "position": None,
     "last_signal": "없음", "last_action": "대기 중",
     "cycle": 0, "errors": 0,
+    "prev_position": None,   # 직전 사이클 포지션 상태
 }
 
 GREEN  = "\033[92m"; RED    = "\033[91m"; YELLOW = "\033[93m"
@@ -74,7 +75,24 @@ def make_job(trader, client, cfg):
             price   = client.get_ticker()
             balance = client.get_balance()
             pos     = client.get_position()
-            STATUS.update({"price": price, "balance": balance, "position": pos})
+            prev    = STATUS["prev_position"]
+            STATUS.update({"price": price, "balance": balance,
+                           "position": pos, "prev_position": pos})
+
+            # 포지션이 사라졌을 때 → TP 또는 SL 판단
+            if prev and not pos:
+                closed = client.get_last_closed_pnl()
+                if closed:
+                    pnl        = float(closed.get("closedPnl", 0))
+                    exit_price = float(closed.get("avgExitPrice", price))
+                    entry_price = float(closed.get("avgEntryPrice", price))
+                    direction  = "롱" if closed.get("side") == "Buy" else "숏"
+                    if pnl >= 0:
+                        alert_tp(direction, entry_price, exit_price, pnl)
+                        log.info("TP 달성 — PnL=+$%.2f", pnl)
+                    else:
+                        alert_sl(direction, entry_price, exit_price, pnl)
+                        log.info("SL 손절 — PnL=$%.2f", pnl)
 
             candles = client.get_klines()
             signal  = analyze(candles, cfg)

@@ -152,8 +152,23 @@ class BybitClient:
 
     def get_ticker(self) -> float:
         """현재 마크 가격 반환."""
-        resp = self.session.get_tickers(category="linear", symbol=self.cfg.symbol)
+        resp = _safe_call(lambda: self.session.get_tickers(category="linear", symbol=self.cfg.symbol))
         return float(resp["result"]["list"][0]["markPrice"])
+
+    def get_last_closed_pnl(self) -> Optional[dict]:
+        """가장 최근 청산된 포지션 정보 반환."""
+        try:
+            resp = _safe_call(lambda: self.session.get_closed_pnl(
+                category="linear",
+                symbol=self.cfg.symbol,
+                limit=1,
+            ))
+            items = resp["result"]["list"]
+            if items:
+                return items[0]
+        except Exception as e:
+            log.warning("청산 내역 조회 실패: %s", e)
+        return None
 
     def get_min_qty(self) -> float:
         """심볼의 최소 주문 수량 반환."""
