@@ -79,20 +79,21 @@ def make_job(trader, client, cfg):
             STATUS.update({"price": price, "balance": balance,
                            "position": pos, "prev_position": pos})
 
-            # 포지션이 사라졌을 때 → TP 또는 SL 판단
+            # 포지션이 사라졌을 때 → TP 또는 SL 판단 (해당 심볼 기준으로 조회)
             if prev and not pos:
-                closed = client.get_last_closed_pnl()
+                prev_sym = prev.get("symbol", cfg.symbol)
+                closed = client.get_last_closed_pnl(symbol=prev_sym)
                 if closed:
                     pnl         = float(closed.get("closedPnl", 0))
                     exit_price  = float(closed.get("avgExitPrice", price))
                     entry_price = float(closed.get("avgEntryPrice", price))
                     direction   = "롱" if closed.get("side") == "Buy" else "숏"
                     if pnl >= 0:
-                        alert_tp(direction, entry_price, exit_price, pnl)
-                        log.info("TP 달성 — PnL=+$%.2f", pnl)
+                        alert_tp(direction, entry_price, exit_price, pnl, symbol=prev_sym)
+                        log.info("TP 달성 (%s) — PnL=+$%.2f", prev_sym, pnl)
                     else:
-                        alert_sl(direction, entry_price, exit_price, pnl)
-                        log.info("SL 손절 — PnL=$%.2f", pnl)
+                        alert_sl(direction, entry_price, exit_price, pnl, symbol=prev_sym)
+                        log.info("SL 손절 (%s) — PnL=$%.2f", prev_sym, pnl)
 
             # 이미 포지션 있으면 스캔 생략
             if pos:

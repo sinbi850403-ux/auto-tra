@@ -166,14 +166,13 @@ class BybitClient:
         resp = _safe_call(lambda: self.session.get_tickers(category="linear", symbol=sym))
         return float(resp["result"]["list"][0]["markPrice"])
 
-    def get_last_closed_pnl(self) -> Optional[dict]:
-        """가장 최근 청산된 포지션 정보 반환."""
+    def get_last_closed_pnl(self, symbol: str = None) -> Optional[dict]:
+        """가장 최근 청산된 포지션 정보 반환. symbol 미지정 시 전체 조회."""
         try:
-            resp = _safe_call(lambda: self.session.get_closed_pnl(
-                category="linear",
-                symbol=self.cfg.symbol,
-                limit=1,
-            ))
+            kwargs = dict(category="linear", limit=1)
+            if symbol:
+                kwargs["symbol"] = symbol
+            resp = _safe_call(lambda: self.session.get_closed_pnl(**kwargs))
             items = resp["result"]["list"]
             if items:
                 return items[0]

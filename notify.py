@@ -36,22 +36,26 @@ def alert_entry(direction: str, entry: float, sl: float, tp: float,
     )
 
 
-def alert_tp(direction: str, entry: float, exit_price: float, pnl: float):
+def alert_tp(direction: str, entry: float, exit_price: float, pnl: float, symbol: str = ""):
+    coin = symbol.replace("USDT", "") + "/" if symbol else ""
     send(
         f"🎯 <b>TP 달성!</b>\n"
+        f"종목: {coin}USDT\n"
         f"방향: {direction}\n"
-        f"진입가: ${entry:,.2f}\n"
-        f"청산가: ${exit_price:,.2f}\n"
+        f"진입가: ${entry:,.4f}\n"
+        f"청산가: ${exit_price:,.4f}\n"
         f"수익: <b>+${pnl:.2f} USDT</b> 🟢"
     )
 
 
-def alert_sl(direction: str, entry: float, exit_price: float, pnl: float):
+def alert_sl(direction: str, entry: float, exit_price: float, pnl: float, symbol: str = ""):
+    coin = symbol.replace("USDT", "") + "/" if symbol else ""
     send(
         f"🛑 <b>SL 손절</b>\n"
+        f"종목: {coin}USDT\n"
         f"방향: {direction}\n"
-        f"진입가: ${entry:,.2f}\n"
-        f"청산가: ${exit_price:,.2f}\n"
+        f"진입가: ${entry:,.4f}\n"
+        f"청산가: ${exit_price:,.4f}\n"
         f"손실: <b>${pnl:.2f} USDT</b> 🔴"
     )
 
