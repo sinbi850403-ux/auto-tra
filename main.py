@@ -76,8 +76,19 @@ def draw_dashboard(cfg):
 def _handle_partial_close(pos, prev_pos, client, cfg):
     """부분 청산 감지 (TP1 / TP2) → SL 본전 이동."""
     ei = STATUS.get("entry_info")
+
+    # 봇 재시작으로 entry_info가 없으면 포지션 정보로 복구
     if not ei:
-        return
+        sym = prev_pos.get("symbol", cfg.symbol)
+        STATUS["entry_info"] = {
+            "symbol":      sym,
+            "entry_price": float(prev_pos.get("avgPrice", 0)),
+            "entry_qty":   float(prev_pos.get("size", 0)),
+            "tp_count":    0,
+            "side":        prev_pos.get("side", "Buy"),
+        }
+        ei = STATUS["entry_info"]
+        log.info("봇 재시작 후 포지션 복구 (%s)", sym)
 
     curr_size  = float(pos["size"])
     entry_qty  = ei["entry_qty"]
@@ -113,13 +124,22 @@ def _handle_partial_close(pos, prev_pos, client, cfg):
 
 def _handle_full_close(prev_pos, price, client, cfg):
     """포지션 전량 청산 감지 (TP3 / SL / 본전SL)."""
-    ei = STATUS.get("entry_info")
-    sym        = ei["symbol"] if ei else cfg.symbol
-    entry_price = ei["entry_price"] if ei else 0.0
-    direction  = ("롱" if ei["side"] == "Buy" else "숏") if ei else "?"
-    tp_count   = ei["tp_count"] if ei else 0
+    ei  = STATUS.get("entry_info")
+    sym = (ei["symbol"] if ei else None) or prev_pos.get("symbol", cfg.symbol)
 
     closed = client.get_last_closed_pnl(symbol=sym)
+
+    # entry_price: entry_info → closed PnL → prev_pos 순으로 fallback
+    entry_price = (
+        ei["entry_price"] if ei and ei["entry_price"] > 0
+        else float(closed.get("avgEntryPrice", 0)) if closed else
+        float(prev_pos.get("avgPrice", price))
+    )
+    direction = (
+        ("롱" if ei["side"] == "Buy" else "숏") if ei
+        else ("롱" if prev_pos.get("side") == "Buy" else "숏")
+    )
+    tp_count = ei["tp_count"] if ei else 0
     pnl        = float(closed.get("closedPnl", 0)) if closed else 0.0
     exit_price = float(closed.get("avgExitPrice", price)) if closed else price
 
@@ -250,6 +270,20 @@ def main():
 
     client = BybitClient(cfg)
     trader = Trader(client, cfg)
+
+    # 시작 시 기존 포지션 감지 → entry_info 복구 (재시작 대비)
+    existing = client.get_any_position()
+    if existing:
+        STATUS["entry_info"] = {
+            "symbol":      existing["symbol"],
+            "entry_price": float(existing.get("avgPrice", 0)),
+            "entry_qty":   float(existing["size"]),
+            "tp_count":    0,
+            "side":        existing["side"],
+        }
+        log.info("기존 포지션 감지 — %s %s @ %.4f (재시작 복구)",
+                 existing["symbol"], existing["side"],
+                 float(existing.get("avgPrice", 0)))
 
     job = make_job(trader, client, cfg)
     job()
