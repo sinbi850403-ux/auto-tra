@@ -23,6 +23,16 @@ def _safe_call(fn, retries=3, delay=5):
     raise Exception("Rate Limit 재시도 초과")
 
 
+def _round_price(price: float) -> str:
+    """가격 크기에 따라 소수점 자릿수 자동 조정."""
+    if price >= 100:
+        return str(round(price, 2))
+    elif price >= 1:
+        return str(round(price, 3))
+    else:
+        return str(round(price, 4))
+
+
 class BybitClient:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -88,7 +98,6 @@ class BybitClient:
                 coins = resp["result"]["list"][0]["coin"]
                 for c in coins:
                     if c["coin"] == "USDT":
-                        # 빈 문자열 방어 처리
                         for field in ("availableToWithdraw", "availableBalance", "walletBalance"):
                             val = c.get(field, "")
                             if val != "":
@@ -122,10 +131,10 @@ class BybitClient:
     # 주문
     # ------------------------------------------------------------------ #
 
-    def place_order(self, side: str, qty: float, sl_price: float, tp_price: float,
+    def place_order(self, side: str, qty: float, sl_price: float,
                     symbol: str = None) -> dict:
         """
-        시장가 주문 + SL/TP 동시 설정.
+        시장가 진입 + SL 설정. TP는 별도 지정가 주문으로 처리.
         side: "Buy" | "Sell"
         """
         sym = symbol or self.cfg.symbol
@@ -135,30 +144,62 @@ class BybitClient:
             side=side,
             orderType="Market",
             qty=str(qty),
-            stopLoss=str(round(sl_price, 2)),
-            takeProfit=str(round(tp_price, 2)),
-            tpslMode="Full",
+            stopLoss=_round_price(sl_price),
             slTriggerBy="MarkPrice",
-            tpTriggerBy="MarkPrice",
+            tpslMode="Full",
             timeInForce="GoodTillCancel",
             reduceOnly=False,
         )
-        log.info("주문 실행 — side=%s qty=%s SL=%.2f TP=%.2f", side, qty, sl_price, tp_price)
+        log.info("진입 주문 — side=%s qty=%s SL=%s (%s)", side, qty, _round_price(sl_price), sym)
         return resp
 
-    def close_position(self, side: str, qty: float):
+    def place_reduce_only_limit(self, side: str, qty: float, price: float,
+                                symbol: str = None) -> dict:
+        """분할 TP용 리듀스온리 지정가 주문."""
+        sym = symbol or self.cfg.symbol
+        resp = self.session.place_order(
+            category="linear",
+            symbol=sym,
+            side=side,
+            orderType="Limit",
+            qty=str(qty),
+            price=_round_price(price),
+            reduceOnly=True,
+            timeInForce="GoodTillCancel",
+        )
+        log.info("TP 지정가 — %s %s @ %s (%s)", side, qty, _round_price(price), sym)
+        return resp
+
+    def set_sl(self, sl_price: float, symbol: str = None):
+        """포지션 SL 업데이트 (TP1 달성 후 본전 이동용)."""
+        sym = symbol or self.cfg.symbol
+        try:
+            self.session.set_trading_stop(
+                category="linear",
+                symbol=sym,
+                stopLoss=_round_price(sl_price),
+                slTriggerBy="MarkPrice",
+                tpslMode="Full",
+                positionIdx=0,
+            )
+            log.info("SL 본전 이동 → %s (%s)", _round_price(sl_price), sym)
+        except Exception as e:
+            log.warning("SL 업데이트 실패 (%s): %s", sym, e)
+
+    def close_position(self, side: str, qty: float, symbol: str = None):
         """현재 포지션 강제 청산 (reduceOnly)."""
+        sym = symbol or self.cfg.symbol
         close_side = "Sell" if side == "Buy" else "Buy"
         self.session.place_order(
             category="linear",
-            symbol=self.cfg.symbol,
+            symbol=sym,
             side=close_side,
             orderType="Market",
             qty=str(qty),
             reduceOnly=True,
             timeInForce="GoodTillCancel",
         )
-        log.info("포지션 청산 — %s %s", close_side, qty)
+        log.info("포지션 청산 — %s %s (%s)", close_side, qty, sym)
 
     def get_ticker(self, symbol: str = None) -> float:
         """현재 마크 가격 반환."""
@@ -188,7 +229,7 @@ class BybitClient:
         return float(lot["minOrderQty"])
 
     def get_qty_step(self, symbol: str = None) -> float:
-        """수량 스텝 (소수점 자릿수) 반환."""
+        """수량 스텝 반환."""
         sym = symbol or self.cfg.symbol
         resp = self.session.get_instruments_info(category="linear", symbol=sym)
         lot = resp["result"]["list"][0]["lotSizeFilter"]

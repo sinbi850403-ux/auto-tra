@@ -25,9 +25,9 @@ class Config:
 
     # --- 레버리지 & 리스크 ---
     leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "20")))
-    risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.20")))
-    rr_ratio: float = 2.0         # 손익비 1:2
-    sl_buffer_pct: float = 0.002  # SL을 오더블록 경계보다 0.2% 더 여유
+    risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.10")))
+    # TP는 1:1 / 1:2 / 1:3 고정 (3분할 청산)
+    sl_buffer_pct: float = 0.002  # SL을 슈퍼트렌드 라인보다 0.2% 더 여유
 
     # --- EMA 파라미터 ---
     ema_trend: int = 200          # 추세 필터용 EMA200

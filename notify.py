@@ -20,43 +20,73 @@ def send(text: str):
         log.warning("텔레그램 전송 실패: %s", e)
 
 
-def alert_entry(direction: str, entry: float, sl: float, tp: float,
+def _coin(symbol: str) -> str:
+    return symbol.replace("USDT", "")
+
+
+def alert_entry(direction: str, entry: float,
+                sl: float, tp1: float, tp2: float, tp3: float,
                 qty: float, balance: float, symbol: str = "BTCUSDT"):
     emoji = "🟢" if direction == "롱" else "🔴"
-    coin = symbol.replace("USDT", "")
+    coin  = _coin(symbol)
     send(
-        f"{emoji} <b>진입 신호</b>\n"
-        f"종목: {coin}/USDT\n"
-        f"방향: {direction}\n"
-        f"진입가: ${entry:,.2f}\n"
-        f"SL: ${sl:,.2f}\n"
-        f"TP: ${tp:,.2f}\n"
-        f"수량: {qty} {coin}\n"
-        f"잔고: ${balance:.2f} USDT"
+        f"{emoji} <b>진입!</b>  {coin}/USDT  {direction}\n"
+        f"진입가: <b>${entry:,.4f}</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"🛑 SL:  ${sl:,.4f}\n"
+        f"🎯 TP1: ${tp1:,.4f}  (1:1)\n"
+        f"🎯 TP2: ${tp2:,.4f}  (1:2)\n"
+        f"🏆 TP3: ${tp3:,.4f}  (1:3)\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"수량: {qty} {coin}  |  잔고: ${balance:.2f}"
     )
 
 
-def alert_tp(direction: str, entry: float, exit_price: float, pnl: float, symbol: str = ""):
-    coin = symbol.replace("USDT", "") + "/" if symbol else ""
+def alert_tp1(direction: str, symbol: str, entry: float, exit_p: float, pnl: float):
+    coin = _coin(symbol)
     send(
-        f"🎯 <b>TP 달성!</b>\n"
-        f"종목: {coin}USDT\n"
-        f"방향: {direction}\n"
-        f"진입가: ${entry:,.4f}\n"
-        f"청산가: ${exit_price:,.4f}\n"
-        f"수익: <b>+${pnl:.2f} USDT</b> 🟢"
+        f"🎯 <b>TP1 달성!</b>  {coin}/USDT  {direction}\n"
+        f"${entry:,.4f} → ${exit_p:,.4f}\n"
+        f"수익: <b>+${pnl:.2f} USDT</b>\n"
+        f"✅ SL → 본전 이동 완료 (이제 무손실!)"
     )
 
 
-def alert_sl(direction: str, entry: float, exit_price: float, pnl: float, symbol: str = ""):
-    coin = symbol.replace("USDT", "") + "/" if symbol else ""
+def alert_tp2(direction: str, symbol: str, entry: float, exit_p: float, pnl: float):
+    coin = _coin(symbol)
     send(
-        f"🛑 <b>SL 손절</b>\n"
-        f"종목: {coin}USDT\n"
-        f"방향: {direction}\n"
-        f"진입가: ${entry:,.4f}\n"
-        f"청산가: ${exit_price:,.4f}\n"
+        f"🎯🎯 <b>TP2 달성!</b>  {coin}/USDT  {direction}\n"
+        f"${entry:,.4f} → ${exit_p:,.4f}\n"
+        f"수익: <b>+${pnl:.2f} USDT</b>\n"
+        f"🚀 TP3 향해 달리는 중..."
+    )
+
+
+def alert_tp3(direction: str, symbol: str, entry: float, exit_p: float, pnl: float):
+    coin = _coin(symbol)
+    send(
+        f"🏆 <b>TP3 풀청산!</b>  {coin}/USDT  {direction}\n"
+        f"${entry:,.4f} → ${exit_p:,.4f}\n"
+        f"수익: <b>+${pnl:.2f} USDT</b> 🎊"
+    )
+
+
+def alert_sl(direction: str, symbol: str, entry: float, exit_p: float, pnl: float):
+    coin = _coin(symbol)
+    send(
+        f"🛑 <b>SL 손절</b>  {coin}/USDT  {direction}\n"
+        f"${entry:,.4f} → ${exit_p:,.4f}\n"
         f"손실: <b>${pnl:.2f} USDT</b> 🔴"
+    )
+
+
+def alert_be_sl(direction: str, symbol: str, entry: float):
+    """본전 SL에 걸렸을 때 (TP1 이후 SL 이동 후 청산)."""
+    coin = _coin(symbol)
+    send(
+        f"⚡ <b>본전 청산</b>  {coin}/USDT  {direction}\n"
+        f"진입가: ${entry:,.4f}\n"
+        f"TP1 수익 확보 후 본전 청산 — 손해 없음 ✅"
     )
 
 
@@ -74,5 +104,6 @@ def alert_start(symbol: str, leverage: int, risk_pct: float, scan_count: int = 1
         f"심볼: {symbol_text}\n"
         f"레버리지: {leverage}x\n"
         f"리스크: {risk_pct*100:.0f}%\n"
-        f"전략: MTF 슈퍼트렌드 (1H+15M+EMA200)"
+        f"전략: MTF 슈퍼트렌드 (1H+15M+EMA200)\n"
+        f"TP: 3분할 (1:1 / 1:2 / 1:3) + 본전 SL 이동"
     )
