@@ -19,8 +19,7 @@ class Config:
 
     # --- 멀티 종목 스캐너 ---
     scan_symbols: list = field(default_factory=lambda: [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
-        "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+        "BTCUSDT", "ETHUSDT", "SOLUSDT",
     ])
 
     # --- 레버리지 & 리스크 ---
