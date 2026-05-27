@@ -13,6 +13,13 @@ def _safe_call(fn, retries=3, delay=5):
     for i in range(retries):
         try:
             return fn()
+        except KeyError as e:
+            # pybit 내부 버그: X-Bapi-Limit-Reset-Timestamp 헤더 없을 때 KeyError
+            if "bapi" in str(e).lower() or "limit" in str(e).lower():
+                log.warning("Rate Limit (KeyError) — %d초 후 재시도 (%d/%d)", delay, i+1, retries)
+                time.sleep(delay)
+            else:
+                raise
         except Exception as e:
             msg = str(e)
             if "rate limit" in msg.lower() or "x-bapi-limit" in msg.lower() or "10006" in msg:
