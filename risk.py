@@ -39,9 +39,9 @@ def calc_trade(
         if sl_dist <= 0:
             log.warning("SL 거리가 0 이하 — 롱 신호 무시")
             return None
-        tp1 = entry + sl_dist * 1.0
-        tp2 = entry + sl_dist * 2.0
-        tp3 = entry + sl_dist * 3.0
+        tp1 = entry + sl_dist * cfg.tp1_r
+        tp2 = entry + sl_dist * cfg.tp2_r
+        tp3 = entry + sl_dist * cfg.tp3_r
         side = "Buy"
     else:
         sl = signal.sl_price * (1 + cfg.sl_buffer_pct)
@@ -49,9 +49,9 @@ def calc_trade(
         if sl_dist <= 0:
             log.warning("SL 거리가 0 이하 — 숏 신호 무시")
             return None
-        tp1 = entry - sl_dist * 1.0
-        tp2 = entry - sl_dist * 2.0
-        tp3 = entry - sl_dist * 3.0
+        tp1 = entry - sl_dist * cfg.tp1_r
+        tp2 = entry - sl_dist * cfg.tp2_r
+        tp3 = entry - sl_dist * cfg.tp3_r
         side = "Sell"
 
     # 포지션 사이징
@@ -76,8 +76,10 @@ def calc_trade(
 
     log.info(
         "거래 파라미터 — %s 총qty=%.4f (%.4f/%.4f/%.4f) "
-        "SL=%.4f TP1=%.4f TP2=%.4f TP3=%.4f 리스크=$%.2f",
-        side, qty, qty1, qty2, qty3, sl, tp1, tp2, tp3, qty * sl_dist,
+        "SL=%.4f TP1=%.4f(%.1fR) TP2=%.4f(%.1fR) TP3=%.4f(%.1fR) 리스크=$%.2f",
+        side, qty, qty1, qty2, qty3,
+        sl, tp1, cfg.tp1_r, tp2, cfg.tp2_r, tp3, cfg.tp3_r,
+        qty * sl_dist,
     )
 
     return TradeParams(

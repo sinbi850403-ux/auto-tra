@@ -25,8 +25,13 @@ class Config:
     # --- 레버리지 & 리스크 ---
     leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "20")))
     risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.10")))
-    # TP는 1:1 / 1:2 / 1:3 고정 (3분할 청산)
     sl_buffer_pct: float = 0.002  # SL을 슈퍼트렌드 라인보다 0.2% 더 여유
+
+    # --- TP 배율 (리스크 대비 수익비) ---
+    # TP1: 빠른 부분 확보  TP2: 중간 목표  TP3: 추세 극대화
+    tp1_r: float = 0.8   # 리스크의 0.8배 — 체결률 높음
+    tp2_r: float = 1.5   # 리스크의 1.5배
+    tp3_r: float = 2.5   # 리스크의 2.5배 — 추세 극대화
 
     # --- EMA 파라미터 ---
     ema_trend: int = 200          # 추세 필터용 EMA200

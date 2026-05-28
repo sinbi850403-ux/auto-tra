@@ -193,6 +193,15 @@ class BybitClient:
         except Exception as e:
             log.warning("SL 업데이트 실패 (%s): %s", sym, e)
 
+    def cancel_all_orders(self, symbol: str = None):
+        """미체결 주문 전체 취소 (TP 지정가 주문 포함)."""
+        sym = symbol or self.cfg.symbol
+        try:
+            self.session.cancel_all_orders(category="linear", symbol=sym)
+            log.info("미체결 주문 전체 취소 완료 (%s)", sym)
+        except Exception as e:
+            log.warning("주문 취소 실패 (%s): %s", sym, e)
+
     def close_position(self, side: str, qty: float, symbol: str = None):
         """현재 포지션 강제 청산 (reduceOnly)."""
         sym = symbol or self.cfg.symbol

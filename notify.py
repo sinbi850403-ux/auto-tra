@@ -90,6 +90,20 @@ def alert_be_sl(direction: str, symbol: str, entry: float):
     )
 
 
+def alert_counter_close(direction: str, symbol: str,
+                        entry: float, exit_p: float, pnl: float):
+    """역신호 감지로 인한 즉시 전량 청산 알림."""
+    coin  = _coin(symbol)
+    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+    emoji = "🟢" if pnl >= 0 else "🔴"
+    send(
+        f"🔄 <b>역신호 즉시 청산!</b>  {coin}/USDT  {direction}\n"
+        f"진입가: ${entry:,.4f}  →  청산가: ${exit_p:,.4f}\n"
+        f"PnL: <b>{pnl_str} USDT</b>  {emoji}\n"
+        f"⚡ 반대 방향 신호 감지 → 전량 청산 실행"
+    )
+
+
 def alert_error(msg: str):
     send(f"⚠️ <b>봇 오류</b>\n{msg[:200]}")
 

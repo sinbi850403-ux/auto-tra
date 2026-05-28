@@ -88,3 +88,29 @@ def analyze(candles_15m: list, cfg: Config,
         return Signal("short", close, sl_line)
 
     return None
+
+
+def current_direction(candles_15m: list, cfg: Config,
+                      candles_1h: list = None) -> int:
+    """
+    현재 시장 방향 반환 — 크로스오버 불필요.
+    두 타임프레임이 일치할 때만 방향 반환, 불일치 시 0.
+
+    +1 = 상승(롱 유리), -1 = 하락(숏 유리), 0 = 불명확
+    역신호 청산 감지에 사용.
+    """
+    if len(candles_15m) < cfg.st_atr_period + 5:
+        return 0
+
+    st_15m  = supertrend(candles_15m, cfg)
+    ltf_dir = st_15m.direction[-1]
+
+    if candles_1h and len(candles_1h) >= cfg.st_atr_period + 5:
+        cfg_htf = _cfg_with_htf(cfg)
+        st_1h   = supertrend(candles_1h, cfg_htf)
+        htf_dir = st_1h.direction[-1]
+        if htf_dir != ltf_dir:
+            return 0   # 두 TF 불일치 → 판단 보류
+        return ltf_dir
+
+    return ltf_dir

@@ -9,7 +9,8 @@ import schedule
 from config import Config
 from client import BybitClient
 from trader import Trader
-from notify import alert_start, alert_error, alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl
+from notify import (alert_start, alert_error, alert_counter_close,
+                    alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl)
 
 # TTY 여부 감지 — 클라우드 서버는 터미널 없음
 IS_TTY = sys.stdout.isatty()
@@ -35,7 +36,8 @@ STATUS = {
     "cycle": 0, "errors": 0,
     "prev_position": None,
     # 진입 추적 (3분할 TP 관리용)
-    "entry_info": None,   # {symbol, entry_price, entry_qty, tp_count, side}
+    "entry_info": None,      # {symbol, entry_price, entry_qty, tp_count, side}
+    "counter_closed": False, # 역신호 청산 중복 알림 방지 플래그
 }
 
 GREEN  = "\033[92m"; RED    = "\033[91m"; YELLOW = "\033[93m"
@@ -58,7 +60,7 @@ def draw_dashboard(cfg):
     print(f"{BOLD}{CYAN}")
     print("  ╔══════════════════════════════════════════╗")
     print("  ║        바이비트 자동 선물 봇              ║")
-    print("  ║   MTF 슈퍼트렌드  |  3분할 TP (1:1/2/3)  ║")
+    print("  ║  MTF 슈퍼트렌드  |  3분할 TP (0.8/1.5/2.5R) ║")
     print("  ╚══════════════════════════════════════════╝")
     print(f"{RESET}")
     print(f"  {WHITE}현재 시각  {RESET} {now}")
@@ -123,7 +125,14 @@ def _handle_partial_close(pos, prev_pos, client, cfg):
 
 
 def _handle_full_close(prev_pos, price, client, cfg):
-    """포지션 전량 청산 감지 (TP3 / SL / 본전SL)."""
+    """포지션 전량 청산 감지 (TP3 / SL / 본전SL / 역신호)."""
+    # 역신호 청산으로 이미 알림 전송됨 → 이중 알림 방지
+    if STATUS.get("counter_closed"):
+        STATUS["counter_closed"] = False
+        STATUS["entry_info"] = None
+        log.info("역신호 청산 확인 완료")
+        return
+
     ei  = STATUS.get("entry_info")
     sym = (ei["symbol"] if ei else None) or prev_pos.get("symbol", cfg.symbol)
 
@@ -233,6 +242,39 @@ def make_job(trader, client, cfg):
                 ei = STATUS.get("entry_info")
                 tp_label = f" (TP{ei['tp_count']} 달성)" if ei and ei["tp_count"] > 0 else ""
                 STATUS["last_action"] = f"홀딩 중{tp_label}"
+
+                # 역신호 감지 → 즉시 전량 청산
+                if ei:
+                    try:
+                        from strategy import current_direction
+                        sym      = ei["symbol"]
+                        c15m_cs  = client.get_klines(symbol=sym)
+                        c1h_cs   = client.get_klines(interval=cfg.htf_interval, symbol=sym)
+                        curr_dir = current_direction(c15m_cs, cfg, c1h_cs)
+                        pos_dir  = 1 if ei["side"] == "Buy" else -1
+
+                        if curr_dir != 0 and curr_dir != pos_dir:
+                            direction  = "롱" if ei["side"] == "Buy" else "숏"
+                            mark       = client.get_ticker(sym)
+                            remaining  = float(pos["size"])
+                            pnl_est    = (mark - ei["entry_price"]) * remaining
+                            if ei["side"] == "Sell":
+                                pnl_est = -pnl_est
+
+                            log.warning(
+                                "🔄 역신호 감지 (%s) — dir=%+d, pos=%+d → 전량 청산",
+                                sym, curr_dir, pos_dir,
+                            )
+                            client.cancel_all_orders(symbol=sym)         # TP 지정가 취소
+                            client.close_position(ei["side"], remaining, symbol=sym)
+                            alert_counter_close(direction, sym,
+                                                ei["entry_price"], mark, pnl_est)
+                            STATUS["counter_closed"] = True
+                            STATUS["entry_info"]     = None
+                            STATUS["last_action"]    = "역신호 청산 🔄"
+                    except Exception as e:
+                        log.warning("역신호 체크 실패: %s", e)
+
                 if not IS_TTY:
                     log.info("포지션 유지 — %s %s  size=%s  잔고=$%.2f",
                              pos["symbol"], pos["side"], pos["size"], balance)
