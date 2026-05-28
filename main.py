@@ -162,10 +162,14 @@ def _handle_full_close(prev_pos, price, client, cfg):
         alert_be_sl(direction, sym, entry_price)
         log.info("본전 청산 (%s) — TP1 수익 확보", sym)
         STATUS["last_action"] = "본전 청산 ✅"
+    elif tp_count == 1 and pnl >= 0:
+        # TP2 최종 청산 (qty3가 qty2에 합산된 케이스)
+        alert_tp2(direction, sym, entry_price, exit_price, pnl)
+        log.info("TP2 최종청산 (%s) — PnL=+$%.2f", sym, pnl)
+        STATUS["last_action"] = "TP2 완료 🎯🎯"
     elif pnl >= 0:
-        # TP 조기 청산 (TP1 전에 가격 튀어서 전량 청산된 경우)
-        from notify import alert_tp1 as _tp
-        _tp(direction, sym, entry_price, exit_price, pnl)
+        # TP 조기 청산 (TP1 전에 전량 청산된 경우)
+        alert_tp1(direction, sym, entry_price, exit_price, pnl)
         log.info("TP 달성 (%s) — PnL=+$%.2f", sym, pnl)
         STATUS["last_action"] = "TP 달성 🎯"
     else:
@@ -232,7 +236,7 @@ def make_job(trader, client, cfg):
                         break
 
                 if not found:
-                    STATUS["last_signal"] = "없음 (10종목 스캔 완료)"
+                    STATUS["last_signal"] = f"없음 ({len(cfg.scan_symbols)}종목 스캔 완료)"
                     STATUS["last_action"] = "대기 중"
                     if not IS_TTY:
                         log.info("신호 없음 — BTC=%.2f  잔고=$%.2f", price, balance)
