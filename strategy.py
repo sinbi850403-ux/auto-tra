@@ -6,8 +6,8 @@
   2. 15분봉 슈퍼트렌드가 같은 방향으로 전환 (진입 타이밍)
   3. 현재가가 EMA200 기준 올바른 방향 (추세 필터)
 
-롱:  1H ST 상승 + 15M ST 하락→상승 전환 + 가격 > EMA200
-숏:  1H ST 하락 + 15M ST 상승→하락 전환 + 가격 < EMA200
+롱:  1H ST 상승 + 15M ST 하락→상승 전환 + 가격 > EMA50
+숏:  1H ST 하락 + 15M ST 상승→하락 전환 + 가격 < EMA50
 """
 import logging
 from dataclasses import dataclass

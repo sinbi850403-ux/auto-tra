@@ -34,7 +34,7 @@ class Config:
     tp3_r: float = 2.5   # 리스크의 2.5배 — 추세 극대화
 
     # --- EMA 파라미터 ---
-    ema_trend: int = 200          # 추세 필터용 EMA200
+    ema_trend: int = 50           # 추세 필터용 EMA50
 
     # --- 슈퍼트렌드 파라미터 ---
     st_atr_period: int = 10       # ATR 기간
