@@ -61,7 +61,7 @@ class Trader:
             order_id = resp["result"].get("orderId", "?")
             log.info("진입 완료 orderId=%s (%s)", order_id, sym)
 
-            # 2. TP1 / TP2 / TP3 지정가 주문 배치
+            # 2. TP1 / TP2 지정가 주문 배치 (TP3는 EMA50 트레일링으로 관리)
             close_side = "Sell" if params.side == "Buy" else "Buy"
             if params.qty1 > 0:
                 self.client.place_reduce_only_limit(
@@ -69,9 +69,7 @@ class Trader:
             if params.qty2 > 0:
                 self.client.place_reduce_only_limit(
                     close_side, params.qty2, params.tp2_price, symbol=sym)
-            if params.qty3 > 0:
-                self.client.place_reduce_only_limit(
-                    close_side, params.qty3, params.tp3_price, symbol=sym)
+            # qty3: 지정가 없음 — EMA50 이탈 시 main.py에서 시장가 청산
 
             # 3. 진입 알림
             from notify import alert_entry

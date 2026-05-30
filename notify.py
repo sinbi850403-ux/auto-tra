@@ -106,6 +106,19 @@ def alert_counter_close(direction: str, symbol: str,
     )
 
 
+def alert_trailing_close(direction: str, symbol: str, entry: float, exit_p: float, pnl: float):
+    """TP2 이후 EMA50 이탈로 나머지 포지션 트레일링 청산."""
+    coin = _coin(symbol)
+    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+    emoji   = "🟢" if pnl >= 0 else "🔴"
+    send(
+        f"📈 <b>트레일링 청산</b>  {coin}/USDT  {direction}\n"
+        f"${entry:,.4f} → ${exit_p:,.4f}\n"
+        f"PnL: <b>{pnl_str} USDT</b>  {emoji}\n"
+        f"15M EMA50 이탈 → 나머지 포지션 청산"
+    )
+
+
 def alert_error(msg: str):
     send(f"⚠️ <b>봇 오류</b>\n{msg[:200]}")
 

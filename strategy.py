@@ -1,116 +1,181 @@
 """
-멀티 타임프레임 슈퍼트렌드 + EMA200 전략.
+EMA50/200 추세 추종 전략 (4H + 15M).
 
-진입 조건 (3중 확인):
-  1. 1시간봉 슈퍼트렌드 방향 확인 (큰 흐름)
-  2. 15분봉 슈퍼트렌드가 같은 방향으로 전환 (진입 타이밍)
-  3. 현재가가 EMA200 기준 올바른 방향 (추세 필터)
+롱 진입 조건:
+  1. 4H EMA50 > EMA200 (상승 추세)
+  2. 가격 > 4H EMA200
+  3. 15M에서 EMA50 눌림 후 반등 양봉
+  4. 직전 고점 돌파 시 진입
+  SL: 눌림 저점 아래
 
-롱:  1H ST 상승 + 15M ST 하락→상승 전환 + 가격 > EMA200
-숏:  1H ST 하락 + 15M ST 상승→하락 전환 + 가격 < EMA200
+숏 진입 조건:
+  1. 4H EMA50 < EMA200 (하락 추세)
+  2. 가격 < 4H EMA200
+  3. 15M에서 EMA50까지 반등 후 저항 음봉
+  4. 직전 저점 이탈 시 진입
+  SL: 반등 고점 위
+
+피하는 구간:
+  - 4H EMA50/200 간격 너무 좁음 (횡보)
+  - 가격이 두 EMA 사이에서 흔들림
+  - 최근 급등/급락 후 추격
+  - SL이 너무 멀 때
 """
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
 from config import Config
-from indicators import supertrend, ema200, SupertrendResult
+from indicators import (
+    ema, swing_high, swing_low,
+    find_pullback_low, find_pullback_high,
+)
 
 log = logging.getLogger(__name__)
 
 
 @dataclass
 class Signal:
-    direction: str
+    direction: str       # "long" | "short"
     entry_price: float
     sl_price: float
     ob: object = None
     fib: object = None
 
 
-def _htf_direction(candles_1h: list, cfg: Config) -> int:
-    """1시간봉 슈퍼트렌드 현재 방향. +1=상승, -1=하락."""
-    cfg_copy = _cfg_with_htf(cfg)
-    st = supertrend(candles_1h, cfg_copy)
-    return st.direction[-1]
-
-
-def _cfg_with_htf(cfg: Config):
-    """1시간봉용 설정 (배수만 다르게)."""
-    import copy
-    c = copy.copy(cfg)
-    c.st_multiplier = cfg.st_htf_multiplier
-    return c
-
-
 def analyze(candles_15m: list, cfg: Config,
-            candles_1h: list = None) -> Optional[Signal]:
+            candles_4h: list = None) -> Optional[Signal]:
 
-    if len(candles_15m) < cfg.ema_trend + 10:
-        log.debug("15분봉 캔들 부족 — 스킵")
+    if len(candles_15m) < 210:
+        log.debug("15M 캔들 부족 — 스킵")
+        return None
+    if not candles_4h or len(candles_4h) < 210:
+        log.debug("4H 캔들 부족 — 스킵")
         return None
 
-    # 1시간봉 방향
-    htf_dir = 1  # 기본값 (1시간봉 없으면 필터 생략)
-    if candles_1h and len(candles_1h) >= cfg.st_atr_period + 5:
-        htf_dir = _htf_direction(candles_1h, cfg)
-        log.debug("1H 슈퍼트렌드 방향: %s", "상승" if htf_dir == 1 else "하락")
+    # ── 4시간봉 EMA ──────────────────────────────────────────────
+    closes_4h  = [c["close"] for c in candles_4h]
+    ema50_4h   = ema(closes_4h, cfg.ema_fast)[-1]
+    ema200_4h  = ema(closes_4h, cfg.ema_slow)[-1]
 
-    # 15분봉 슈퍼트렌드 + EMA200
-    st    = supertrend(candles_15m, cfg)
-    e200  = ema200(candles_15m, cfg)
+    # 필터: 4H EMA 간격 너무 좁으면 횡보 → 스킵
+    gap_pct = abs(ema50_4h - ema200_4h) / ema200_4h
+    if gap_pct < cfg.ema_gap_min_pct:
+        log.debug("4H EMA 간격 %.2f%% — 횡보 스킵", gap_pct * 100)
+        return None
 
-    prev_dir   = st.direction[-2]
-    curr_dir   = st.direction[-1]
-    close      = candles_15m[-1]["close"]
-    sl_line    = st.line[-1]
-    ema200_val = e200[-1]
+    # ── 15분봉 EMA ───────────────────────────────────────────────
+    closes_15m   = [c["close"] for c in candles_15m]
+    ema50_series = ema(closes_15m, cfg.ema_fast)
+    ema50_15m    = ema50_series[-1]
+    close        = candles_15m[-1]["close"]
+    curr         = candles_15m[-1]
 
-    log.debug(
-        "15M ST: %d→%d | 1H ST: %d | 가격=%.2f | EMA200=%.2f",
-        prev_dir, curr_dir, htf_dir, close, ema200_val
-    )
+    # 필터: 급등/급락 후 추격 금지
+    if len(candles_15m) >= 4:
+        recent_move = abs(close - candles_15m[-4]["close"]) / candles_15m[-4]["close"]
+        if recent_move > cfg.max_momentum_pct:
+            log.debug("급등/급락 %.2f%% — 추격 스킵", recent_move * 100)
+            return None
 
-    # 롱: 3중 확인
-    if (htf_dir == 1 and          # 1시간봉 상승
-            prev_dir == -1 and    # 15분봉 전환
-            curr_dir == 1 and
-            close > ema200_val):  # EMA200 위
-        log.info("🟢 롱 신호 @ %.2f (1H↑ 15M↑전환 EMA200위)", close)
-        return Signal("long", close, sl_line)
+    htf_bullish = ema50_4h > ema200_4h
 
-    # 숏: 3중 확인
-    if (htf_dir == -1 and         # 1시간봉 하락
-            prev_dir == 1 and     # 15분봉 전환
-            curr_dir == -1 and
-            close < ema200_val):  # EMA200 아래
-        log.info("🔴 숏 신호 @ %.2f (1H↓ 15M↓전환 EMA200아래)", close)
-        return Signal("short", close, sl_line)
+    log.debug("4H EMA50=%.4f EMA200=%.4f(%s) | 15M EMA50=%.4f | 가격=%.4f",
+              ema50_4h, ema200_4h, "상승" if htf_bullish else "하락",
+              ema50_15m, close)
+
+    # ── 롱 조건 ──────────────────────────────────────────────────
+    if htf_bullish and close > ema200_4h:
+        # 가격이 4H 두 EMA 사이에서 흔들리면 스킵 (노이즈 구간)
+        if ema200_4h < close < ema50_4h * 0.998:
+            log.debug("가격이 4H EMA 사이 — 롱 스킵")
+            return None
+
+        pullback_low = find_pullback_low(
+            candles_15m, ema50_series,
+            lookback=cfg.pullback_lookback,
+            tol=cfg.ema_pullback_tol,
+        )
+        if pullback_low is None:
+            return None
+
+        # 현재 캔들: 반등 양봉 + EMA50 위 마감
+        if curr["close"] <= curr["open"] or curr["close"] <= ema50_15m:
+            return None
+
+        # 직전 고점 돌파
+        s_high = swing_high(candles_15m, cfg.swing_lookback)
+        if close <= s_high:
+            return None
+
+        # SL = 눌림 저점 아래 버퍼
+        sl = pullback_low * (1 - cfg.sl_buffer_pct)
+        sl_pct = (close - sl) / close
+        if sl_pct > cfg.sl_max_pct:
+            log.debug("롱 SL 거리 %.2f%% 너무 멀음 — 스킵", sl_pct * 100)
+            return None
+
+        log.info("🟢 롱 신호 @ %.4f | SL=%.4f | 4H↑ EMA50눌림 반등 고점돌파", close, sl)
+        return Signal("long", close, sl)
+
+    # ── 숏 조건 ──────────────────────────────────────────────────
+    if not htf_bullish and close < ema200_4h:
+        # 가격이 4H 두 EMA 사이에서 흔들리면 스킵
+        if ema50_4h * 1.002 < close < ema200_4h:
+            log.debug("가격이 4H EMA 사이 — 숏 스킵")
+            return None
+
+        pullback_high = find_pullback_high(
+            candles_15m, ema50_series,
+            lookback=cfg.pullback_lookback,
+            tol=cfg.ema_pullback_tol,
+        )
+        if pullback_high is None:
+            return None
+
+        # 현재 캔들: 저항 음봉 + EMA50 아래 마감
+        if curr["close"] >= curr["open"] or curr["close"] >= ema50_15m:
+            return None
+
+        # 직전 저점 이탈
+        s_low = swing_low(candles_15m, cfg.swing_lookback)
+        if close >= s_low:
+            return None
+
+        # SL = 반등 고점 위 버퍼
+        sl = pullback_high * (1 + cfg.sl_buffer_pct)
+        sl_pct = (sl - close) / close
+        if sl_pct > cfg.sl_max_pct:
+            log.debug("숏 SL 거리 %.2f%% 너무 멀음 — 스킵", sl_pct * 100)
+            return None
+
+        log.info("🔴 숏 신호 @ %.4f | SL=%.4f | 4H↓ EMA50반등 저항 저점이탈", close, sl)
+        return Signal("short", close, sl)
 
     return None
 
 
 def current_direction(candles_15m: list, cfg: Config,
-                      candles_1h: list = None) -> int:
+                      candles_4h: list = None) -> int:
     """
-    현재 시장 방향 반환 — 크로스오버 불필요.
-    두 타임프레임이 일치할 때만 방향 반환, 불일치 시 0.
-
-    +1 = 상승(롱 유리), -1 = 하락(숏 유리), 0 = 불명확
-    역신호 청산 감지에 사용.
+    현재 시장 방향 — 역신호 청산 감지용.
+    +1=상승(롱 유리), -1=하락(숏 유리), 0=불명확
     """
-    if len(candles_15m) < cfg.st_atr_period + 5:
+    if len(candles_15m) < 55:
         return 0
 
-    st_15m  = supertrend(candles_15m, cfg)
-    ltf_dir = st_15m.direction[-1]
+    closes_15m = [c["close"] for c in candles_15m]
+    ema50_15m  = ema(closes_15m, cfg.ema_fast)[-1]
+    close      = candles_15m[-1]["close"]
+    ltf_dir    = 1 if close > ema50_15m else -1
 
-    if candles_1h and len(candles_1h) >= cfg.st_atr_period + 5:
-        cfg_htf = _cfg_with_htf(cfg)
-        st_1h   = supertrend(candles_1h, cfg_htf)
-        htf_dir = st_1h.direction[-1]
+    if candles_4h and len(candles_4h) >= 210:
+        closes_4h = [c["close"] for c in candles_4h]
+        ema50_4h  = ema(closes_4h, cfg.ema_fast)[-1]
+        ema200_4h = ema(closes_4h, cfg.ema_slow)[-1]
+        htf_dir   = 1 if ema50_4h > ema200_4h else -1
         if htf_dir != ltf_dir:
-            return 0   # 두 TF 불일치 → 판단 보류
+            return 0
         return ltf_dir
 
     return ltf_dir

@@ -14,8 +14,9 @@ class Config:
 
     # --- 거래 대상 ---
     symbol: str = field(default_factory=lambda: os.getenv("SYMBOL", "BTCUSDT"))
-    interval: str = "15"          # 15분봉
-    candle_limit: int = 300       # 전략 계산에 필요한 캔들 수
+    interval: str = "15"          # 15분봉 (진입 타이밍)
+    htf_interval: str = "240"     # 4시간봉 (추세 방향)
+    candle_limit: int = 300       # 캔들 수 (EMA200 계산에 충분)
 
     # --- 멀티 종목 스캐너 ---
     scan_symbols: list = field(default_factory=lambda: [
@@ -25,31 +26,24 @@ class Config:
     # --- 레버리지 & 리스크 ---
     leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "20")))
     risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.10")))
-    sl_buffer_pct: float = 0.002  # SL을 슈퍼트렌드 라인보다 0.2% 더 여유
+    sl_buffer_pct: float = 0.001  # SL 눌림저점 아래 0.1% 여유
 
-    # --- TP 배율 (리스크 대비 수익비) ---
-    # TP1: 빠른 부분 확보  TP2: 중간 목표  TP3: 추세 극대화
-    tp1_r: float = 0.8   # 리스크의 0.8배 — 체결률 높음
-    tp2_r: float = 1.5   # 리스크의 1.5배
-    tp3_r: float = 2.5   # 리스크의 2.5배 — 추세 극대화
+    # --- TP 배율 (손절폭 기준) ---
+    tp1_r: float = 1.0   # TP1: 손절폭 1배
+    tp2_r: float = 2.0   # TP2: 손절폭 2배
+    # TP3: EMA50 이탈 시 트레일링 청산 (지정가 없음)
 
     # --- EMA 파라미터 ---
-    ema_trend: int = 200          # 추세 필터용 EMA200
+    ema_fast: int = 50    # EMA50 (진입 기준선)
+    ema_slow: int = 200   # EMA200 (추세 기준선)
 
-    # --- 슈퍼트렌드 파라미터 ---
-    st_atr_period: int = 10       # ATR 기간
-    st_multiplier: float = 2.0    # 15분봉 배수
-    st_htf_multiplier: float = 3.0  # 1시간봉 배수 (노이즈 필터 강하게)
-    htf_interval: str = "60"      # 상위 타임프레임 (1시간봉)
-
-    # --- 오더블록 파라미터 (미사용, 호환성 유지) ---
-    ob_lookback: int = 50
-    ob_body_ratio: float = 0.6
-    fib_swing_lookback: int = 50
-    fib_entry_low: float = 0.618
-    fib_entry_high: float = 0.786
-    ema_fast: int = 20
-    ema_slow: int = 50
+    # --- 전략 필터 파라미터 ---
+    ema_gap_min_pct: float = 0.005   # 4H EMA50/200 최소 간격 (0.5% 미만 = 횡보)
+    ema_pullback_tol: float = 0.004  # EMA50 눌림 허용 오차 (0.4%)
+    swing_lookback: int = 20         # 직전 고점/저점 탐색 캔들 수
+    pullback_lookback: int = 10      # 눌림/반등 감지 캔들 수
+    sl_max_pct: float = 0.05         # SL 최대 거리 5% 초과 시 진입 금지
+    max_momentum_pct: float = 0.04   # 최근 3캔들 급등/급락 4% 초과 시 추격 금지
 
     # --- 실행 주기 ---
     check_interval_sec: int = 60  # 1분마다 신호 확인
@@ -60,5 +54,5 @@ class Config:
         if self.risk_pct > 0.20:
             import logging
             logging.getLogger(__name__).warning(
-                "RISK_PCT=%.0f%% — 1회 리스크가 매우 높습니다. 1~5%% 권장.", self.risk_pct * 100
+                "RISK_PCT=%.0f%% — 1회 리스크가 높습니다. 5~10%% 권장.", self.risk_pct * 100
             )

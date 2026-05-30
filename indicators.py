@@ -1,4 +1,4 @@
-"""EMA + 슈퍼트렌드 — 순수 Python."""
+"""EMA + 슈퍼트렌드 + 스윙 고점/저점 — 순수 Python."""
 from dataclasses import dataclass
 from typing import List, Optional
 from config import Config
@@ -92,6 +92,50 @@ def supertrend(candles: list, cfg: Config) -> SupertrendResult:
 # ------------------------------------------------------------------ #
 # EMA200 추세 필터
 # ------------------------------------------------------------------ #
+
+def swing_high(candles: list, lookback: int = 20) -> float:
+    """직전 lookback 캔들의 최고점 (현재 캔들 제외)."""
+    window = candles[-(lookback + 1):-1]
+    return max(c["high"] for c in window) if window else 0.0
+
+
+def swing_low(candles: list, lookback: int = 20) -> float:
+    """직전 lookback 캔들의 최저점 (현재 캔들 제외)."""
+    window = candles[-(lookback + 1):-1]
+    return min(c["low"] for c in window) if window else float("inf")
+
+
+def find_pullback_low(candles: list, ema50_series: List[float],
+                      lookback: int = 10, tol: float = 0.004) -> Optional[float]:
+    """
+    최근 lookback 캔들에서 EMA50 눌림 저점 찾기.
+    캔들 저점이 EMA50 ± tol 이내이거나 EMA50을 하향 터치하면 저점 반환.
+    """
+    window_c   = candles[-(lookback + 1):-1]
+    window_e50 = ema50_series[-(lookback + 1):-1]
+    for c, e50 in zip(window_c, window_e50):
+        near = abs(c["low"] - e50) / e50 <= tol
+        touch = c["low"] <= e50 <= c["high"]
+        if near or touch:
+            return c["low"]
+    return None
+
+
+def find_pullback_high(candles: list, ema50_series: List[float],
+                       lookback: int = 10, tol: float = 0.004) -> Optional[float]:
+    """
+    최근 lookback 캔들에서 EMA50 반등 고점 찾기.
+    캔들 고점이 EMA50 ± tol 이내이거나 EMA50을 상향 터치하면 고점 반환.
+    """
+    window_c   = candles[-(lookback + 1):-1]
+    window_e50 = ema50_series[-(lookback + 1):-1]
+    for c, e50 in zip(window_c, window_e50):
+        near = abs(c["high"] - e50) / e50 <= tol
+        touch = c["low"] <= e50 <= c["high"]
+        if near or touch:
+            return c["high"]
+    return None
+
 
 def ema200(candles: list, cfg: Config) -> List[float]:
     closes = [c["close"] for c in candles]

@@ -10,7 +10,8 @@ from config import Config
 from client import BybitClient
 from trader import Trader
 from notify import (alert_start, alert_error, alert_counter_close,
-                    alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl)
+                    alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl,
+                    alert_trailing_close)
 
 # TTY 여부 감지 — 클라우드 서버는 터미널 없음
 IS_TTY = sys.stdout.isatty()
@@ -247,8 +248,37 @@ def make_job(trader, client, cfg):
                 tp_label = f" (TP{ei['tp_count']} 달성)" if ei and ei["tp_count"] > 0 else ""
                 STATUS["last_action"] = f"홀딩 중{tp_label}"
 
+                # TP2 이후 — EMA50 트레일링 스탑 (나머지 1/3 포지션)
+                if ei and ei["tp_count"] >= 2:
+                    try:
+                        from indicators import ema as calc_ema
+                        sym      = ei["symbol"]
+                        c15m_tr  = client.get_klines(symbol=sym)
+                        closes   = [c["close"] for c in c15m_tr]
+                        ema50    = calc_ema(closes, cfg.ema_fast)[-1]
+                        curr_p   = c15m_tr[-1]["close"]
+                        side     = ei["side"]
+                        triggered = (
+                            (side == "Buy"  and curr_p < ema50) or
+                            (side == "Sell" and curr_p > ema50)
+                        )
+                        if triggered:
+                            remaining = float(pos["size"])
+                            direction = "롱" if side == "Buy" else "숏"
+                            closed    = client.get_last_closed_pnl(symbol=sym)
+                            pnl       = float(closed.get("closedPnl", 0)) if closed else 0.0
+                            client.cancel_all_orders(symbol=sym)
+                            client.close_position(side, remaining, symbol=sym)
+                            alert_trailing_close(direction, sym,
+                                                 ei["entry_price"], curr_p, pnl)
+                            log.info("📈 EMA50 트레일링 청산 (%s) @ %.4f", sym, curr_p)
+                            STATUS["entry_info"]  = None
+                            STATUS["last_action"] = "트레일링 청산 📈"
+                    except Exception as e:
+                        log.warning("트레일링 스탑 체크 실패: %s", e)
+
                 # 역신호 감지 → 즉시 전량 청산
-                if ei:
+                if ei and STATUS.get("entry_info"):  # 트레일링에서 이미 청산 안 됐으면
                     try:
                         from strategy import current_direction
                         sym      = ei["symbol"]
