@@ -175,7 +175,7 @@ class BybitClient:
             qty=str(qty),
             price=_round_price(price),
             reduceOnly=True,
-            timeInForce="GoodTillCancel",
+            timeInForce="GTC",
         )
         log.info("TP 지정가 — %s %s @ %s (%s)", side, qty, _round_price(price), sym)
         return resp
