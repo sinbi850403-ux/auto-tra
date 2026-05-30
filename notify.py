@@ -8,6 +8,8 @@ log = logging.getLogger(__name__)
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+_last_start_time = 0  # 시작 알림 중복 방지용
+
 
 def send(text: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -109,6 +111,13 @@ def alert_error(msg: str):
 
 
 def alert_start(symbol: str, leverage: int, risk_pct: float, scan_count: int = 1):
+    global _last_start_time
+    import time
+    # 5분 이내 중복 시작 알림 무시
+    if time.time() - _last_start_time < 300:
+        return
+    _last_start_time = time.time()
+
     if scan_count > 1:
         symbol_text = f"상위 {scan_count}종목 스캔"
     else:
