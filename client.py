@@ -120,7 +120,7 @@ class BybitClient:
     def get_position(self, symbol: str = None) -> Optional[dict]:
         """현재 열린 포지션 반환. 없으면 None."""
         sym = symbol or self.cfg.symbol
-        resp = self.session.get_positions(category="linear", symbol=sym)
+        resp = _safe_call(lambda: self.session.get_positions(category="linear", symbol=sym))
         for p in resp["result"]["list"]:
             if float(p["size"]) > 0:
                 return p
@@ -129,9 +129,12 @@ class BybitClient:
     def get_any_position(self) -> Optional[dict]:
         """전체 종목 중 열린 포지션 하나 반환."""
         for sym in self.cfg.scan_symbols:
-            pos = self.get_position(sym)
-            if pos:
-                return pos
+            try:
+                pos = self.get_position(sym)
+                if pos:
+                    return pos
+            except Exception as e:
+                log.warning("포지션 조회 실패 (%s): %s", sym, e)
         return None
 
     # ------------------------------------------------------------------ #
