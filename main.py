@@ -317,19 +317,46 @@ def main():
     client = BybitClient(cfg)
     trader = Trader(client, cfg)
 
-    # 시작 시 기존 포지션 감지 → entry_info 복구 (재시작 대비)
+    # 시작 시 기존 포지션 감지 → entry_info 복구 + TP 주문 복구
     existing = client.get_any_position()
     if existing:
+        sym        = existing["symbol"]
+        entry      = float(existing.get("avgPrice", 0))
+        size       = float(existing["size"])
+        side       = existing["side"]
+        sl_price   = float(existing.get("stopLoss", 0))
+
         STATUS["entry_info"] = {
-            "symbol":      existing["symbol"],
-            "entry_price": float(existing.get("avgPrice", 0)),
-            "entry_qty":   float(existing["size"]),
-            "tp_count":    0,
-            "side":        existing["side"],
+            "symbol": sym, "entry_price": entry,
+            "entry_qty": size, "tp_count": 0, "side": side,
         }
-        log.info("기존 포지션 감지 — %s %s @ %.4f (재시작 복구)",
-                 existing["symbol"], existing["side"],
-                 float(existing.get("avgPrice", 0)))
+        log.info("기존 포지션 감지 — %s %s @ %.4f (재시작 복구)", sym, side, entry)
+
+        # TP 지정가 주문이 없으면 재배치
+        open_orders = client.get_open_orders(sym)
+        has_tp = any(o.get("reduceOnly") for o in open_orders)
+        if not has_tp and sl_price > 0 and entry > 0:
+            try:
+                from risk import _floor_to_step
+                close_side = "Sell" if side == "Buy" else "Buy"
+                sl_dist    = (entry - sl_price) if side == "Buy" else (sl_price - entry)
+                if sl_dist > 0:
+                    tp1 = entry + sl_dist * cfg.tp1_r if side == "Buy" else entry - sl_dist * cfg.tp1_r
+                    tp2 = entry + sl_dist * cfg.tp2_r if side == "Buy" else entry - sl_dist * cfg.tp2_r
+                    tp3 = entry + sl_dist * cfg.tp3_r if side == "Buy" else entry - sl_dist * cfg.tp3_r
+                    qty_step = client.get_qty_step(sym)
+                    min_qty  = client.get_min_qty(sym)
+                    q1 = _floor_to_step(size / 3, qty_step)
+                    q2 = _floor_to_step(size / 3, qty_step)
+                    q3 = _floor_to_step(size - q1 - q2, qty_step)
+                    if q3 < min_qty:
+                        q2 = _floor_to_step(q2 + q3, qty_step); q3 = 0.0
+                    if q1 > 0: client.place_reduce_only_limit(close_side, q1, tp1, symbol=sym)
+                    if q2 > 0: client.place_reduce_only_limit(close_side, q2, tp2, symbol=sym)
+                    if q3 > 0: client.place_reduce_only_limit(close_side, q3, tp3, symbol=sym)
+                    log.info("TP 주문 복구 완료 — TP1=%.4f TP2=%.4f TP3=%.4f", tp1, tp2, tp3)
+            except Exception as e:
+                log.warning("TP 주문 복구 실패: %s", e)
 
     job = make_job(trader, client, cfg)
     job()

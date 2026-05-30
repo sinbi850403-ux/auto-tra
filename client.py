@@ -196,6 +196,17 @@ class BybitClient:
         except Exception as e:
             log.warning("SL 업데이트 실패 (%s): %s", sym, e)
 
+    def get_open_orders(self, symbol: str = None) -> list:
+        """미체결 주문 목록 반환."""
+        sym = symbol or self.cfg.symbol
+        try:
+            resp = _safe_call(lambda: self.session.get_open_orders(
+                category="linear", symbol=sym))
+            return resp["result"]["list"]
+        except Exception as e:
+            log.warning("미체결 주문 조회 실패 (%s): %s", sym, e)
+            return []
+
     def cancel_all_orders(self, symbol: str = None):
         """미체결 주문 전체 취소 (TP 지정가 주문 포함)."""
         sym = symbol or self.cfg.symbol
