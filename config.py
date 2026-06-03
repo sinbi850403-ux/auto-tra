@@ -24,7 +24,7 @@ class Config:
     ])
 
     # --- 레버리지 & 리스크 ---
-    leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "20")))
+    leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "50")))
     risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.10")))
     sl_buffer_pct: float = 0.001  # SL 눌림저점 아래 0.1% 여유
 
