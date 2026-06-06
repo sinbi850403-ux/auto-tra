@@ -8,8 +8,9 @@ from config import Config
 log = logging.getLogger(__name__)
 
 
-def _safe_call(fn, retries=3, delay=5):
-    """Rate Limit 오류 시 재시도."""
+def _safe_call(fn, retries=5, delay=10):
+    """Rate Limit / Timeout 오류 시 재시도."""
+    import requests.exceptions as req_exc
     for i in range(retries):
         try:
             return fn()
@@ -20,14 +21,22 @@ def _safe_call(fn, retries=3, delay=5):
                 time.sleep(delay)
             else:
                 raise
+        except (req_exc.ReadTimeout, req_exc.ConnectTimeout, req_exc.Timeout) as e:
+            # 네트워크 타임아웃 — 재시도
+            wait = delay * (i + 1)  # 점진적 대기 (10s, 20s, 30s...)
+            log.warning("API 타임아웃 — %d초 후 재시도 (%d/%d): %s", wait, i+1, retries, e)
+            time.sleep(wait)
         except Exception as e:
             msg = str(e)
-            if "rate limit" in msg.lower() or "x-bapi-limit" in msg.lower() or "10006" in msg:
-                log.warning("Rate Limit — %d초 후 재시도 (%d/%d)", delay, i+1, retries)
-                time.sleep(delay)
+            if ("rate limit" in msg.lower() or "x-bapi-limit" in msg.lower()
+                    or "10006" in msg or "timed out" in msg.lower()
+                    or "timeout" in msg.lower() or "connectionpool" in msg.lower()):
+                wait = delay * (i + 1)
+                log.warning("API 오류 (재시도 가능) — %d초 후 재시도 (%d/%d): %s", wait, i+1, retries, e)
+                time.sleep(wait)
             else:
                 raise
-    raise Exception("Rate Limit 재시도 초과")
+    raise Exception("API 재시도 초과 (Rate Limit / Timeout)")
 
 
 def _round_price(price: float) -> str:
@@ -47,7 +56,13 @@ class BybitClient:
             testnet=cfg.testnet,
             api_key=cfg.api_key,
             api_secret=cfg.api_secret,
+            recv_window=10000,   # 서버 수신 허용 창 (ms)
         )
+        # 기본 HTTP timeout을 30초로 확장 (기본값 10초 → 타임아웃 빈발)
+        try:
+            self.session.client.timeout = 30
+        except Exception:
+            pass
         self._init_leverage()
 
     # ------------------------------------------------------------------ #
