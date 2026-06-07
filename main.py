@@ -9,6 +9,7 @@ import schedule
 from config import Config
 from client import BybitClient
 from trader import Trader
+from guard import TradeGuard, load_state, save_state
 from notify import (alert_start, alert_error, alert_counter_close,
                     alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl,
                     alert_trailing_close)
@@ -41,6 +42,18 @@ STATUS = {
     "counter_closed": False, # 역신호 청산 중복 알림 방지 플래그
 }
 
+# 디스크 영속 상태 (재시작에도 entry_info / 안전장치 카운터 유지)
+_STATE = load_state()
+
+
+def _persist_entry_info():
+    """STATUS의 entry_info + counter_closed를 디스크에 저장 — 재시작 시 정확히 복구.
+    (counter_closed도 함께 저장해야 재시작 시 트레일링/역신호 청산이 안전장치에
+    이중 기록되지 않는다.)"""
+    _STATE["entry_info"] = STATUS.get("entry_info")
+    _STATE["counter_closed"] = STATUS.get("counter_closed", False)
+    save_state(_STATE)
+
 GREEN  = "\033[92m"; RED    = "\033[91m"; YELLOW = "\033[93m"
 CYAN   = "\033[96m"; WHITE  = "\033[97m"; RESET  = "\033[0m"; BOLD = "\033[1m"
 
@@ -61,7 +74,7 @@ def draw_dashboard(cfg):
     print(f"{BOLD}{CYAN}")
     print("  ╔══════════════════════════════════════════╗")
     print("  ║        바이비트 자동 선물 봇              ║")
-    print("  ║  MTF 슈퍼트렌드  |  3분할 TP (0.8/1.5/2.5R) ║")
+    print("  ║  4H EMA추세 + 15M 눌림목 | TP 1R/2R/트레일 ║")
     print("  ╚══════════════════════════════════════════╝")
     print(f"{RESET}")
     print(f"  {WHITE}현재 시각  {RESET} {now}")
@@ -112,6 +125,7 @@ def _handle_partial_close(pos, prev_pos, client, cfg):
     # TP1: 잔여 수량이 초기의 ~2/3 이하 (33% 청산됨)
     if tp_count == 0 and curr_size < entry_qty * 0.75:
         ei["tp_count"] = 1
+        _persist_entry_info()
         client.set_sl(entry_price, symbol=sym)   # SL → 본전
         alert_tp1(direction, sym, entry_price, mark, pnl_est)
         log.info("TP1 달성 (%s) — SL 본전(%.4f) 이동", sym, entry_price)
@@ -120,17 +134,19 @@ def _handle_partial_close(pos, prev_pos, client, cfg):
     # TP2: 잔여 수량이 초기의 ~1/3 이하 (66% 청산됨)
     elif tp_count == 1 and curr_size < entry_qty * 0.45:
         ei["tp_count"] = 2
+        _persist_entry_info()
         alert_tp2(direction, sym, entry_price, mark, pnl_est)
-        log.info("TP2 달성 (%s) — TP3 대기 중", sym)
-        STATUS["last_action"] = f"TP2 달성 → TP3 대기"
+        log.info("TP2 달성 (%s) — TP3(트레일링) 대기 중", sym)
+        STATUS["last_action"] = f"TP2 달성 → 트레일링 대기"
 
 
-def _handle_full_close(prev_pos, price, client, cfg):
+def _handle_full_close(prev_pos, price, client, cfg, guard, balance):
     """포지션 전량 청산 감지 (TP3 / SL / 본전SL / 역신호)."""
-    # 역신호 청산으로 이미 알림 전송됨 → 이중 알림 방지
+    # 역신호 청산으로 이미 알림+손익 기록 완료됨 → 이중 처리 방지
     if STATUS.get("counter_closed"):
         STATUS["counter_closed"] = False
         STATUS["entry_info"] = None
+        _persist_entry_info()
         log.info("역신호 청산 확인 완료")
         return
 
@@ -153,13 +169,19 @@ def _handle_full_close(prev_pos, price, client, cfg):
     pnl        = float(closed.get("closedPnl", 0)) if closed else 0.0
     exit_price = float(closed.get("avgExitPrice", price)) if closed else price
 
+    # 안전장치에 기록할 손익. 기본은 실현손익. 단, TP1을 이미 확보한 뒤의
+    # '본전 청산'은 마지막 1/3 다리가 수수료로 살짝 마이너스여도 전체 거래는
+    # 이득/본전이므로 손실(연속손절)로 세지 않는다. (자체검토 #4)
+    guard_pnl = pnl
+
     if tp_count >= 2:
         # TP3 달성
         alert_tp3(direction, sym, entry_price, exit_price, pnl)
         log.info("TP3 풀청산 (%s) — PnL=+$%.2f", sym, pnl)
         STATUS["last_action"] = "TP3 완료 🏆"
     elif tp_count == 1 and abs(pnl) < 0.5:
-        # 본전 SL (TP1 이후 SL 이동해서 원금 복구)
+        # 본전 SL (TP1 이후 SL 이동해서 원금 복구) — 손실 아님
+        guard_pnl = 0.0
         alert_be_sl(direction, sym, entry_price)
         log.info("본전 청산 (%s) — TP1 수익 확보", sym)
         STATUS["last_action"] = "본전 청산 ✅"
@@ -179,10 +201,14 @@ def _handle_full_close(prev_pos, price, client, cfg):
         log.info("SL 손절 (%s) — PnL=$%.2f", sym, pnl)
         STATUS["last_action"] = "SL 손절 🛑"
 
+    # 안전장치에 실현손익 기록 (연속손절/일일손실/쿨다운 카운터 갱신)
+    guard.record_result(guard_pnl, balance)
+
     STATUS["entry_info"] = None
+    _persist_entry_info()
 
 
-def make_job(trader, client, cfg):
+def make_job(trader, client, cfg, guard):
     from strategy import analyze
 
     def job():
@@ -200,47 +226,55 @@ def make_job(trader, client, cfg):
 
             # ── 케이스 1: 포지션 전량 청산 ──────────────────────────────
             if prev and not pos:
-                _handle_full_close(prev, price, client, cfg)
+                _handle_full_close(prev, price, client, cfg, guard, balance)
 
             # ── 케이스 2: 부분 청산 (TP1 또는 TP2 체결) ─────────────────
             elif prev and pos and curr_size < prev_size * 0.85:
                 _handle_partial_close(pos, prev, client, cfg)
 
-            # ── 케이스 3: 포지션 없음 → 스캔 ────────────────────────────
+            # ── 케이스 3: 포지션 없음 → (안전장치 통과 시) 스캔 ──────────
             elif not pos:
-                found = False
-                for sym in cfg.scan_symbols:
-                    try:
-                        c15m = client.get_klines(symbol=sym)
-                        c1h  = client.get_klines(interval=cfg.htf_interval, symbol=sym)
-                        sig  = analyze(c15m, cfg, c1h)
-                    except Exception as e:
-                        log.warning("스캔 실패 (%s): %s", sym, e)
-                        continue
-
-                    if sig:
-                        direction = "롱" if sig.direction == "long" else "숏"
-                        STATUS["last_signal"] = f"{sym} {direction} @ ${sig.entry_price:,.4f}"
-                        STATUS["last_action"] = "주문 진행 중"
-                        params = trader.run_cycle(sig, balance, symbol=sym)
-                        if params:
-                            # 진입 성공 → entry_info 저장
-                            STATUS["entry_info"] = {
-                                "symbol":      sym,
-                                "entry_price": sig.entry_price,
-                                "entry_qty":   params.qty,
-                                "tp_count":    0,
-                                "side":        params.side,
-                            }
-                            STATUS["last_action"] = f"진입 완료 ({sym})"
-                        found = True
-                        break
-
-                if not found:
-                    STATUS["last_signal"] = f"없음 ({len(cfg.scan_symbols)}종목 스캔 완료)"
-                    STATUS["last_action"] = "대기 중"
+                ok, reason = guard.can_trade(balance)
+                if not ok:
+                    STATUS["last_signal"] = "진입 정지 (안전장치)"
+                    STATUS["last_action"] = reason
                     if not IS_TTY:
-                        log.info("신호 없음 — BTC=%.2f  잔고=$%.2f", price, balance)
+                        log.info("🛡️ 안전장치 작동 — 신규 진입 보류: %s", reason)
+                else:
+                    found = False
+                    for sym in cfg.scan_symbols:
+                        try:
+                            c15m = client.get_klines(symbol=sym)
+                            c1h  = client.get_klines(interval=cfg.htf_interval, symbol=sym)
+                            sig  = analyze(c15m, cfg, c1h)
+                        except Exception as e:
+                            log.warning("스캔 실패 (%s): %s", sym, e)
+                            continue
+
+                        if sig:
+                            direction = "롱" if sig.direction == "long" else "숏"
+                            STATUS["last_signal"] = f"{sym} {direction} @ ${sig.entry_price:,.4f}"
+                            STATUS["last_action"] = "주문 진행 중"
+                            params = trader.run_cycle(sig, balance, symbol=sym)
+                            if params:
+                                # 진입 성공 → entry_info 저장 (디스크에도 영속화)
+                                STATUS["entry_info"] = {
+                                    "symbol":      sym,
+                                    "entry_price": sig.entry_price,
+                                    "entry_qty":   params.qty,
+                                    "tp_count":    0,
+                                    "side":        params.side,
+                                }
+                                _persist_entry_info()
+                                STATUS["last_action"] = f"진입 완료 ({sym})"
+                            found = True
+                            break
+
+                    if not found:
+                        STATUS["last_signal"] = f"없음 ({len(cfg.scan_symbols)}종목 스캔 완료)"
+                        STATUS["last_action"] = "대기 중"
+                        if not IS_TTY:
+                            log.info("신호 없음 — BTC=%.2f  잔고=$%.2f", price, balance)
 
             # ── 케이스 4: 포지션 홀딩 중 ────────────────────────────────
             else:
@@ -265,14 +299,19 @@ def make_job(trader, client, cfg):
                         if triggered:
                             remaining = float(pos["size"])
                             direction = "롱" if side == "Buy" else "숏"
+                            # 청산 먼저 → 그다음 미체결 정리 (실패 시 무방비 방지)
+                            client.close_position(side, remaining, symbol=sym)
+                            client.cancel_all_orders(symbol=sym)
                             closed    = client.get_last_closed_pnl(symbol=sym)
                             pnl       = float(closed.get("closedPnl", 0)) if closed else 0.0
-                            client.cancel_all_orders(symbol=sym)
-                            client.close_position(side, remaining, symbol=sym)
                             alert_trailing_close(direction, sym,
                                                  ei["entry_price"], curr_p, pnl)
                             log.info("📈 EMA50 트레일링 청산 (%s) @ %.4f", sym, curr_p)
+                            # 트레일링은 TP1+TP2 확보 후 단계(tp_count>=2) → 손실로 세지 않음
+                            guard.record_result(max(pnl, 0.0), balance)
+                            STATUS["counter_closed"] = True   # 다음 사이클 이중처리 방지
                             STATUS["entry_info"]  = None
+                            _persist_entry_info()
                             STATUS["last_action"] = "트레일링 청산 📈"
                     except Exception as e:
                         log.warning("트레일링 스탑 체크 실패: %s", e)
@@ -299,12 +338,17 @@ def make_job(trader, client, cfg):
                                 "🔄 역신호 감지 (%s) — dir=%+d, pos=%+d → 전량 청산",
                                 sym, curr_dir, pos_dir,
                             )
-                            client.cancel_all_orders(symbol=sym)         # TP 지정가 취소
+                            # 청산 먼저 → 그다음 TP 지정가 정리
                             client.close_position(ei["side"], remaining, symbol=sym)
+                            client.cancel_all_orders(symbol=sym)
                             alert_counter_close(direction, sym,
                                                 ei["entry_price"], mark, pnl_est)
+                            # TP1을 이미 확보(tp_count>=1)했으면 본전 이상이므로 손실로 안 셈
+                            guard_pnl_cs = pnl_est if ei["tp_count"] == 0 else max(pnl_est, 0.0)
+                            guard.record_result(guard_pnl_cs, balance)
                             STATUS["counter_closed"] = True
                             STATUS["entry_info"]     = None
+                            _persist_entry_info()
                             STATUS["last_action"]    = "역신호 청산 🔄"
                     except Exception as e:
                         log.warning("역신호 체크 실패: %s", e)
@@ -346,6 +390,10 @@ def main():
 
     client = BybitClient(cfg)
     trader = Trader(client, cfg)
+    guard  = TradeGuard(cfg, _STATE)
+    # 재시작 전 트레일링/역신호 청산이 진행 중이었으면 그 플래그를 복원해
+    # 안전장치에 이중 기록되지 않게 한다. (자체검토 #2)
+    STATUS["counter_closed"] = bool(_STATE.get("counter_closed", False))
 
     # 시작 시 기존 포지션 감지 → entry_info 복구 + TP 주문 복구
     existing = client.get_any_position()
@@ -356,16 +404,34 @@ def main():
         side       = existing["side"]
         sl_price   = float(existing.get("stopLoss", 0))
 
-        STATUS["entry_info"] = {
-            "symbol": sym, "entry_price": entry,
-            "entry_qty": size, "tp_count": 0, "side": side,
-        }
-        log.info("기존 포지션 감지 — %s %s @ %.4f (재시작 복구)", sym, side, entry)
-
-        # TP 지정가 주문이 없으면 재배치
+        # 거래소에 남은 reduceOnly(TP) 주문 수 → tp_count 추정용
         open_orders = client.get_open_orders(sym)
-        has_tp = any(o.get("reduceOnly") for o in open_orders)
-        if not has_tp and sl_price > 0 and entry > 0:
+        resting_tp  = sum(1 for o in open_orders if o.get("reduceOnly"))
+
+        persisted = _STATE.get("entry_info")
+        if (persisted and persisted.get("symbol") == sym
+                and persisted.get("side") == side):
+            # 저장된 정확한 상태로 복구 (entry_qty / tp_count 보존)
+            STATUS["entry_info"] = persisted
+            log.info("저장된 상태로 포지션 복구 — %s %s tp_count=%d entry_qty=%s",
+                     sym, side, persisted.get("tp_count", 0), persisted.get("entry_qty"))
+        else:
+            # 저장 상태 없음 → 남은 TP 주문 수로 tp_count 추정 (entry_qty는 현재 크기 근사).
+            # resting_tp==0은 'TP가 아예 안 깔림'으로 보아 tp_count=0 (안전): 아래에서
+            # TP1/TP2를 재배치한다. 2로 추정하면 신선한 포지션을 트레일링 막판으로 오인해
+            # 작은 EMA 교차에도 전량 청산해버린다. (자체검토 #3)
+            inferred_tp = (2 - resting_tp) if resting_tp > 0 else 0
+            STATUS["entry_info"] = {
+                "symbol": sym, "entry_price": entry,
+                "entry_qty": size, "tp_count": inferred_tp, "side": side,
+            }
+            log.info("저장 상태 없음 — 포지션으로 복구 (tp_count 추정=%d, entry_qty≈현재크기) %s %s @ %.4f",
+                     inferred_tp, sym, side, entry)
+        _persist_entry_info()
+
+        ei = STATUS["entry_info"]
+        # TP가 하나도 없고 아직 TP 단계 진입 전(tp_count==0)일 때만 TP1/TP2 재배치
+        if resting_tp == 0 and ei.get("tp_count", 0) == 0 and sl_price > 0 and entry > 0:
             try:
                 from risk import _floor_to_step
                 close_side = "Sell" if side == "Buy" else "Buy"
@@ -373,22 +439,22 @@ def main():
                 if sl_dist > 0:
                     tp1 = entry + sl_dist * cfg.tp1_r if side == "Buy" else entry - sl_dist * cfg.tp1_r
                     tp2 = entry + sl_dist * cfg.tp2_r if side == "Buy" else entry - sl_dist * cfg.tp2_r
-                    tp3 = entry + sl_dist * cfg.tp3_r if side == "Buy" else entry - sl_dist * cfg.tp3_r
                     qty_step = client.get_qty_step(sym)
-                    min_qty  = client.get_min_qty(sym)
                     q1 = _floor_to_step(size / 3, qty_step)
                     q2 = _floor_to_step(size / 3, qty_step)
-                    q3 = _floor_to_step(size - q1 - q2, qty_step)
-                    if q3 < min_qty:
-                        q2 = _floor_to_step(q2 + q3, qty_step); q3 = 0.0
+                    # 나머지 1/3은 EMA50 트레일링으로 관리 — 지정가 없음 (live 진입과 동일)
                     if q1 > 0: client.place_reduce_only_limit(close_side, q1, tp1, symbol=sym)
                     if q2 > 0: client.place_reduce_only_limit(close_side, q2, tp2, symbol=sym)
-                    if q3 > 0: client.place_reduce_only_limit(close_side, q3, tp3, symbol=sym)
-                    log.info("TP 주문 복구 완료 — TP1=%.4f TP2=%.4f TP3=%.4f", tp1, tp2, tp3)
+                    log.info("TP 주문 복구 완료 — TP1=%.4f TP2=%.4f (나머지 트레일링)", tp1, tp2)
             except Exception as e:
                 log.warning("TP 주문 복구 실패: %s", e)
+    else:
+        # 포지션 없음 → 디스크에 남은 오래된 entry_info 정리
+        if _STATE.get("entry_info"):
+            STATUS["entry_info"] = None
+            _persist_entry_info()
 
-    job = make_job(trader, client, cfg)
+    job = make_job(trader, client, cfg, guard)
     job()
 
     schedule.every(cfg.check_interval_sec).seconds.do(job)

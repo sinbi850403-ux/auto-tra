@@ -24,9 +24,23 @@ class Config:
     ])
 
     # --- 레버리지 & 리스크 ---
-    leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "20")))
-    risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.10")))
+    # 안전 기본값: 레버리지 5x, 1회 리스크 2%. (감사 결과: 20x/20%는 깡통 보장)
+    leverage: int = field(default_factory=lambda: int(os.getenv("LEVERAGE", "5")))
+    risk_pct: float = field(default_factory=lambda: float(os.getenv("RISK_PCT", "0.02")))
     sl_buffer_pct: float = 0.001  # SL 눌림저점 아래 0.1% 여유
+
+    # 하드 캡 (validate에서 강제). 이 값을 넘으면 봇이 시작을 거부한다.
+    risk_pct_hard_cap: float = 0.05            # 1회 리스크 최대 5%
+    # 레버리지 × 최대손절폭 < 이 값 이어야 함 (손절 전 강제청산 방지)
+    lev_sl_safety_limit: float = 0.5
+
+    # --- 안전장치 (guard.py) ---
+    max_consecutive_losses: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CONSECUTIVE_LOSSES", "3")))
+    daily_loss_limit_pct: float = field(
+        default_factory=lambda: float(os.getenv("DAILY_LOSS_LIMIT_PCT", "0.06")))  # 하루 -6%
+    cooldown_after_loss_min: int = field(
+        default_factory=lambda: int(os.getenv("COOLDOWN_AFTER_LOSS_MIN", "30")))
 
     # --- TP 배율 (손절폭 기준) ---
     tp1_r: float = 1.0   # TP1: 손절폭 1배
@@ -51,8 +65,28 @@ class Config:
     def validate(self):
         if not self.api_key or not self.api_secret:
             raise ValueError("BYBIT_API_KEY / BYBIT_API_SECRET 환경변수가 설정되지 않았습니다.")
-        if self.risk_pct > 0.20:
-            import logging
-            logging.getLogger(__name__).warning(
-                "RISK_PCT=%.0f%% — 1회 리스크가 높습니다. 5~10%% 권장.", self.risk_pct * 100
+
+        # 1회 리스크 하드 캡 — 경고가 아니라 차단
+        if self.risk_pct > self.risk_pct_hard_cap:
+            raise ValueError(
+                f"RISK_PCT={self.risk_pct * 100:.1f}% 가 한도({self.risk_pct_hard_cap * 100:.1f}%)를 "
+                f"초과합니다. 1회 리스크는 1~2%를 권장합니다. .env의 RISK_PCT를 낮추세요."
             )
+
+        # 손절 전 강제청산 방지: 레버리지 × 최대손절폭이 너무 크면 손절이
+        # 작동하기 전에 청산당한다. (예: 20x × 5% = 1.0 → 청산 먼저)
+        lev_sl = self.leverage * self.sl_max_pct
+        if lev_sl >= self.lev_sl_safety_limit:
+            # 실제로 통과하는(< 한도) 최대 레버리지를 정확히 계산
+            max_lev = int(self.lev_sl_safety_limit / self.sl_max_pct)
+            if max_lev * self.sl_max_pct >= self.lev_sl_safety_limit:
+                max_lev -= 1
+            max_lev = max(1, max_lev)
+            raise ValueError(
+                f"레버리지({self.leverage}x) × 최대손절폭({self.sl_max_pct * 100:.1f}%) = {lev_sl:.2f} 가 "
+                f"위험 한도({self.lev_sl_safety_limit})를 넘습니다. 손절이 작동하기 전에 강제청산될 수 있습니다. "
+                f"LEVERAGE를 {max_lev}x 이하로 낮추거나 sl_max_pct를 줄이세요."
+            )
+
+        if self.daily_loss_limit_pct <= 0 or self.max_consecutive_losses <= 0:
+            raise ValueError("daily_loss_limit_pct / max_consecutive_losses 는 0보다 커야 합니다.")

@@ -1,5 +1,6 @@
 """Bybit V5 API 래퍼 — 봇에 필요한 기능만 노출."""
 import logging
+import math
 import time
 from typing import Optional
 from pybit.unified_trading import HTTP
@@ -40,13 +41,26 @@ def _safe_call(fn, retries=5, delay=10):
 
 
 def _round_price(price: float) -> str:
-    """가격 크기에 따라 소수점 자릿수 자동 조정."""
+    """tickSize를 모를 때의 fallback (가격 크기 기반 추정)."""
     if price >= 100:
         return str(round(price, 2))
     elif price >= 1:
         return str(round(price, 3))
     else:
         return str(round(price, 4))
+
+
+def _round_to_tick(price: float, tick: float) -> str:
+    """가격을 거래소 호가단위(tickSize)의 배수로 반올림해 문자열로 반환.
+
+    tickSize를 안 맞추면 Bybit가 주문을 거부한다(예: BTCUSDT tick=0.1).
+    """
+    if not tick or tick <= 0:
+        return _round_price(price)
+    steps = round(price / tick)
+    val = steps * tick
+    precision = max(0, -int(math.floor(math.log10(tick))))
+    return f"{val:.{precision}f}"
 
 
 class BybitClient:
@@ -63,7 +77,26 @@ class BybitClient:
             self.session.client.timeout = 30
         except Exception:
             pass
+        self._tick_cache: dict = {}   # symbol -> tickSize
         self._init_leverage()
+
+    def get_tick_size(self, symbol: str = None) -> float:
+        """심볼의 호가단위(priceFilter.tickSize) 반환. 캐시됨."""
+        sym = symbol or self.cfg.symbol
+        if sym not in self._tick_cache:
+            try:
+                resp = _safe_call(lambda: self.session.get_instruments_info(
+                    category="linear", symbol=sym))
+                pf = resp["result"]["list"][0]["priceFilter"]
+                self._tick_cache[sym] = float(pf["tickSize"])
+            except Exception as e:
+                log.warning("tickSize 조회 실패 (%s) — fallback 사용: %s", sym, e)
+                self._tick_cache[sym] = 0.0
+        return self._tick_cache[sym]
+
+    def fmt_price(self, price: float, symbol: str = None) -> str:
+        """호가단위에 맞춰 가격을 문자열로 변환."""
+        return _round_to_tick(price, self.get_tick_size(symbol))
 
     # ------------------------------------------------------------------ #
     # 초기 설정
@@ -79,8 +112,12 @@ class BybitClient:
                     sellLeverage=str(self.cfg.leverage),
                 )
                 log.debug("레버리지 %dx 설정 (%s)", self.cfg.leverage, sym)
-            except Exception:
-                pass
+            except Exception as e:
+                # 110043 = leverage not modified (이미 같은 값) → 정상
+                if "110043" in str(e) or "not modified" in str(e).lower():
+                    log.debug("레버리지 이미 %dx (%s)", self.cfg.leverage, sym)
+                else:
+                    log.warning("레버리지 설정 실패 (%s) — 사이징/청산 가정과 다를 수 있음: %s", sym, e)
         log.info("레버리지 %dx 설정 완료 (전 종목)", self.cfg.leverage)
 
     # ------------------------------------------------------------------ #
@@ -110,6 +147,12 @@ class BybitClient:
             for r in raw
         ]
         candles.sort(key=lambda c: c["ts"])
+        # ⚠️ 핵심: Bybit는 '아직 닫히지 않은(forming) 현재 캔들'을 최신봉으로 준다.
+        # 정렬 후 마지막 원소가 그 미완성 봉이므로 제거한다. 이걸 안 하면 봉이
+        # 만들어지는 중에 신호/청산이 깜빡거리는 리페인팅이 발생한다(감사 치명적 #1).
+        # 제거 후에는 candles[-1] = 마지막으로 '확정된' 봉이 된다.
+        if len(candles) >= 2:
+            candles = candles[:-1]
         return candles
 
     def get_balance(self) -> float:
@@ -163,51 +206,60 @@ class BybitClient:
         side: "Buy" | "Sell"
         """
         sym = symbol or self.cfg.symbol
+        sl_str = self.fmt_price(sl_price, sym)
+        # ⚠️ 진입(시장가)은 절대 자동 재시도하지 않는다. 타임아웃 시 주문이 실제로는
+        # 체결됐는데 응답만 유실될 수 있어, 재시도하면 포지션이 2배로 열린다(중복 진입).
+        # 한 번만 시도하고 실패하면 상위에서 None 처리 → 그 사이클은 진입 포기(안전).
         resp = self.session.place_order(
             category="linear",
             symbol=sym,
             side=side,
             orderType="Market",
             qty=str(qty),
-            stopLoss=_round_price(sl_price),
+            stopLoss=sl_str,
             slTriggerBy="MarkPrice",
             tpslMode="Full",
             timeInForce="GoodTillCancel",
             reduceOnly=False,
+            positionIdx=0,   # one-way 모드 (헤지모드에서 거부 방지)
         )
-        log.info("진입 주문 — side=%s qty=%s SL=%s (%s)", side, qty, _round_price(sl_price), sym)
+        log.info("진입 주문 — side=%s qty=%s SL=%s (%s)", side, qty, sl_str, sym)
         return resp
 
     def place_reduce_only_limit(self, side: str, qty: float, price: float,
                                 symbol: str = None) -> dict:
         """분할 TP용 리듀스온리 지정가 주문."""
         sym = symbol or self.cfg.symbol
+        price_str = self.fmt_price(price, sym)
+        # 재시도 안 함: 타임아웃 후 재전송 시 중복 지정가가 쌓일 수 있음 (reduceOnly라 영향은 제한적이나 회피)
         resp = self.session.place_order(
             category="linear",
             symbol=sym,
             side=side,
             orderType="Limit",
             qty=str(qty),
-            price=_round_price(price),
+            price=price_str,
             reduceOnly=True,
             timeInForce="GTC",
+            positionIdx=0,
         )
-        log.info("TP 지정가 — %s %s @ %s (%s)", side, qty, _round_price(price), sym)
+        log.info("TP 지정가 — %s %s @ %s (%s)", side, qty, price_str, sym)
         return resp
 
     def set_sl(self, sl_price: float, symbol: str = None):
         """포지션 SL 업데이트 (TP1 달성 후 본전 이동용)."""
         sym = symbol or self.cfg.symbol
+        sl_str = self.fmt_price(sl_price, sym)
         try:
             self.session.set_trading_stop(
                 category="linear",
                 symbol=sym,
-                stopLoss=_round_price(sl_price),
+                stopLoss=sl_str,
                 slTriggerBy="MarkPrice",
                 tpslMode="Full",
                 positionIdx=0,
             )
-            log.info("SL 본전 이동 → %s (%s)", _round_price(sl_price), sym)
+            log.info("SL 본전 이동 → %s (%s)", sl_str, sym)
         except Exception as e:
             log.warning("SL 업데이트 실패 (%s): %s", sym, e)
 
@@ -235,6 +287,8 @@ class BybitClient:
         """현재 포지션 강제 청산 (reduceOnly)."""
         sym = symbol or self.cfg.symbol
         close_side = "Sell" if side == "Buy" else "Buy"
+        # 재시도 안 함: 타임아웃 후 재전송 시 중복 청산 시도 가능. reduceOnly라
+        # 포지션이 역전되진 않지만, 실패 시 다음 사이클에서 자연히 재시도됨(SL은 유지).
         self.session.place_order(
             category="linear",
             symbol=sym,
@@ -243,6 +297,7 @@ class BybitClient:
             qty=str(qty),
             reduceOnly=True,
             timeInForce="GoodTillCancel",
+            positionIdx=0,
         )
         log.info("포지션 청산 — %s %s (%s)", close_side, qty, sym)
 

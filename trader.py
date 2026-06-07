@@ -50,8 +50,8 @@ class Trader:
         if params is None:
             return None
 
+        # 1. 시장가 진입 (SL 포함). 실패하면 포지션이 없으므로 None 반환.
         try:
-            # 1. 시장가 진입 (SL만 설정, TP는 별도 지정가 주문으로)
             resp = self.client.place_order(
                 side=params.side,
                 qty=params.qty,
@@ -60,27 +60,36 @@ class Trader:
             )
             order_id = resp["result"].get("orderId", "?")
             log.info("진입 완료 orderId=%s (%s)", order_id, sym)
+        except Exception as e:
+            log.error("진입 주문 실패 (%s): %s", sym, e)
+            return None
 
-            # 2. TP1 / TP2 지정가 주문 배치 (TP3는 EMA50 트레일링으로 관리)
-            close_side = "Sell" if params.side == "Buy" else "Buy"
+        # 여기 도달 = 포지션이 SL과 함께 열렸다. 이후 단계가 실패하더라도
+        # params를 반환해 상위(main)가 entry_info를 저장하고 포지션을 계속
+        # 관리하게 한다. (감사 높음: TP 배치 실패 시 포지션 방치 방지)
+
+        # 2. TP1 / TP2 지정가 배치 (TP3는 EMA50 트레일링). 실패해도 포지션 유지.
+        close_side = "Sell" if params.side == "Buy" else "Buy"
+        try:
             if params.qty1 > 0:
                 self.client.place_reduce_only_limit(
                     close_side, params.qty1, params.tp1_price, symbol=sym)
             if params.qty2 > 0:
                 self.client.place_reduce_only_limit(
                     close_side, params.qty2, params.tp2_price, symbol=sym)
-            # qty3: 지정가 없음 — EMA50 이탈 시 main.py에서 시장가 청산
+        except Exception as e:
+            log.error("TP 주문 배치 실패 (%s) — 포지션은 SL과 함께 유지, 재시작 시 TP 복구: %s",
+                      sym, e)
 
-            # 3. 진입 알림
+        # 3. 진입 알림 (실패 무시)
+        try:
             from notify import alert_entry
             direction = "롱" if params.side == "Buy" else "숏"
             alert_entry(direction, signal.entry_price,
                         params.sl_price,
                         params.tp1_price, params.tp2_price, params.tp3_price,
                         params.qty, balance, symbol=sym)
-
-            return params  # main.py에서 entry_info 저장용
-
         except Exception as e:
-            log.error("주문 실패 (%s): %s", sym, e)
-            return None
+            log.warning("진입 알림 실패 (%s): %s", sym, e)
+
+        return params  # main.py에서 entry_info 저장용

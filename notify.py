@@ -139,7 +139,7 @@ def alert_start(symbol: str, leverage: int, risk_pct: float, scan_count: int = 1
         f"🤖 <b>오토선물봇 시작</b>\n"
         f"심볼: {symbol_text}\n"
         f"레버리지: {leverage}x\n"
-        f"리스크: {risk_pct*100:.0f}%\n"
-        f"전략: MTF 슈퍼트렌드 (1H+15M+EMA200)\n"
-        f"TP: 3분할 (1:1 / 1:2 / 1:3) + 본전 SL 이동"
+        f"리스크: {risk_pct*100:.1f}%\n"
+        f"전략: 4H EMA50/200 추세 + 15M EMA50 눌림목\n"
+        f"TP: TP1=1R / TP2=2R + 나머지 EMA50 트레일링 (TP1 후 본전 SL)"
     )
