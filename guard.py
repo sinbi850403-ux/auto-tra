@@ -46,6 +46,37 @@ def save_state(state: dict):
         log.warning("상태 저장 실패: %s", e)
 
 
+def infer_tp_count(resting_tp: int) -> int:
+    """남은 TP 지정가 수로 tp_count 추정 (재시작 복구용).
+
+    2개 잔존 = 아무것도 체결 안 됨(0), 1개 = TP1 체결(1), 0개 = 별도 처리.
+    3개 이상 = 구버전(3분할 TP)이 깔아둔 잔존 주문 → 체결 없음(0)으로 간주.
+    음수가 나오면 안 된다 — tp_count<0이면 본전 SL 이동·시간손절이 모두 비활성화된다.
+    """
+    if resting_tp <= 0:
+        return 0
+    return max(0, 2 - resting_tp)
+
+
+def sanitize_entry_info(ei) -> "dict | None":
+    """디스크에서 복구한 entry_info 정합성 보정.
+
+    과거 버그로 저장된 tp_count=-1 등이 그대로 복원되면 상태 머신이 죽는다.
+    tp_count는 [0, 2] 정수로 클램프, entry_ts 음수는 0으로.
+    """
+    if not isinstance(ei, dict):
+        return None
+    try:
+        ei["tp_count"] = max(0, min(2, int(ei.get("tp_count", 0))))
+    except (TypeError, ValueError):
+        ei["tp_count"] = 0
+    try:
+        ei["entry_ts"] = max(0.0, float(ei.get("entry_ts", 0.0)))
+    except (TypeError, ValueError):
+        ei["entry_ts"] = 0.0
+    return ei
+
+
 class TradeGuard:
     """신규 진입을 손실 상황에 따라 차단하는 안전장치."""
 

@@ -8,7 +8,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import guard as guard_mod
-from guard import TradeGuard, load_state, save_state
+from guard import (TradeGuard, load_state, save_state,
+                   infer_tp_count, sanitize_entry_info)
 
 
 class CfgStub:
@@ -130,6 +131,56 @@ class TestPersistence(GuardTestBase):
         with open(self.tmp_path, "w", encoding="utf-8") as f:
             f.write("{ broken json")
         self.assertEqual(load_state(), {})
+
+
+class TestInferTpCount(unittest.TestCase):
+    """남은 TP 주문 수 → tp_count 추정. 절대 음수가 나오면 안 됨 (실전 버그)."""
+
+    def test_two_resting_means_none_filled(self):
+        self.assertEqual(infer_tp_count(2), 0)
+
+    def test_one_resting_means_tp1_filled(self):
+        self.assertEqual(infer_tp_count(1), 1)
+
+    def test_zero_resting_handled_separately(self):
+        self.assertEqual(infer_tp_count(0), 0)
+
+    def test_legacy_three_tp_orders_never_negative(self):
+        # 구버전(3분할 TP)이 깔아둔 주문 3개 → -1이 아니라 0
+        self.assertEqual(infer_tp_count(3), 0)
+        self.assertEqual(infer_tp_count(5), 0)
+
+
+class TestSanitizeEntryInfo(unittest.TestCase):
+    def test_negative_tp_count_clamped(self):
+        ei = sanitize_entry_info({"tp_count": -1, "symbol": "XRPUSDT"})
+        self.assertEqual(ei["tp_count"], 0)
+
+    def test_oversized_tp_count_clamped(self):
+        self.assertEqual(sanitize_entry_info({"tp_count": 7})["tp_count"], 2)
+
+    def test_missing_fields_defaulted(self):
+        ei = sanitize_entry_info({"symbol": "BTCUSDT"})
+        self.assertEqual(ei["tp_count"], 0)
+        self.assertEqual(ei["entry_ts"], 0.0)
+
+    def test_garbage_values_defaulted(self):
+        ei = sanitize_entry_info({"tp_count": "abc", "entry_ts": None})
+        self.assertEqual(ei["tp_count"], 0)
+        self.assertEqual(ei["entry_ts"], 0.0)
+
+    def test_negative_entry_ts_zeroed(self):
+        self.assertEqual(sanitize_entry_info({"entry_ts": -5.0})["entry_ts"], 0.0)
+
+    def test_none_passthrough(self):
+        self.assertIsNone(sanitize_entry_info(None))
+        self.assertIsNone(sanitize_entry_info("not a dict"))
+
+    def test_valid_state_untouched(self):
+        ei = sanitize_entry_info({"tp_count": 1, "entry_ts": 123.0, "side": "Buy"})
+        self.assertEqual(ei["tp_count"], 1)
+        self.assertEqual(ei["entry_ts"], 123.0)
+        self.assertEqual(ei["side"], "Buy")
 
 
 if __name__ == "__main__":

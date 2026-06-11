@@ -9,7 +9,8 @@ import schedule
 from config import Config
 from client import BybitClient
 from trader import Trader
-from guard import TradeGuard, load_state, save_state
+from guard import (TradeGuard, load_state, save_state,
+                   infer_tp_count, sanitize_entry_info)
 from risk import funding_blocks, time_stop_hit
 from notify import (alert_start, alert_error, alert_counter_close,
                     alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl,
@@ -476,7 +477,8 @@ def main():
             # 저장된 정확한 상태로 복구 (entry_qty / tp_count 보존)
             # 구버전 상태 파일에 entry_ts가 없으면 지금 시각으로 (시간손절 리셋 — 안전)
             persisted.setdefault("entry_ts", time.time())
-            STATUS["entry_info"] = persisted
+            # 과거 버그로 저장된 tp_count=-1 등 정합성 보정
+            STATUS["entry_info"] = sanitize_entry_info(persisted)
             log.info("저장된 상태로 포지션 복구 — %s %s tp_count=%d entry_qty=%s",
                      sym, side, persisted.get("tp_count", 0), persisted.get("entry_qty"))
         else:
@@ -484,7 +486,8 @@ def main():
             # resting_tp==0은 'TP가 아예 안 깔림'으로 보아 tp_count=0 (안전): 아래에서
             # TP1/TP2를 재배치한다. 2로 추정하면 신선한 포지션을 트레일링 막판으로 오인해
             # 작은 EMA 교차에도 전량 청산해버린다. (자체검토 #3)
-            inferred_tp = (2 - resting_tp) if resting_tp > 0 else 0
+            # 구버전이 깔아둔 TP 3개 이상 잔존 시에도 음수가 되지 않게 클램프
+            inferred_tp = infer_tp_count(resting_tp)
             STATUS["entry_info"] = {
                 "symbol": sym, "entry_price": entry,
                 "entry_qty": size, "tp_count": inferred_tp, "side": side,
