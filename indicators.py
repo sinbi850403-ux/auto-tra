@@ -43,6 +43,85 @@ def atr(candles: list, period: int) -> List[float]:
 
 
 # ------------------------------------------------------------------ #
+# RSI (Wilder)
+# ------------------------------------------------------------------ #
+
+def rsi(values: List[float], period: int = 14) -> List[float]:
+    """Wilder RSI. 워밍업 구간(데이터 부족)은 중립 50.0으로 패딩."""
+    n = len(values)
+    if n < period + 1:
+        return [50.0] * n
+
+    gains, losses = [], []
+    for i in range(1, n):
+        d = values[i] - values[i - 1]
+        gains.append(max(d, 0.0))
+        losses.append(max(-d, 0.0))
+
+    def _rsi(g: float, l: float) -> float:
+        if l == 0:
+            return 100.0 if g > 0 else 50.0
+        return 100.0 - 100.0 / (1.0 + g / l)
+
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    out = [50.0] * period
+    out.append(_rsi(avg_gain, avg_loss))
+    for i in range(period, n - 1):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        out.append(_rsi(avg_gain, avg_loss))
+    return out
+
+
+# ------------------------------------------------------------------ #
+# ADX (Wilder) — 추세 강도
+# ------------------------------------------------------------------ #
+
+def adx(candles: list, period: int = 14) -> List[float]:
+    """Wilder ADX. 워밍업 구간은 0.0 패딩 (0 = 추세 없음으로 보수적 처리)."""
+    n = len(candles)
+    if n < 2 * period + 1:
+        return [0.0] * n
+
+    plus_dm, minus_dm, trs = [], [], []
+    for i in range(1, n):
+        up = candles[i]["high"] - candles[i - 1]["high"]
+        dn = candles[i - 1]["low"] - candles[i]["low"]
+        plus_dm.append(up if (up > dn and up > 0) else 0.0)
+        minus_dm.append(dn if (dn > up and dn > 0) else 0.0)
+        h, l, pc = candles[i]["high"], candles[i]["low"], candles[i - 1]["close"]
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+
+    def _dx(sp: float, sm: float, st: float) -> float:
+        if st == 0:
+            return 0.0
+        di_p = 100.0 * sp / st
+        di_m = 100.0 * sm / st
+        den = di_p + di_m
+        return 0.0 if den == 0 else 100.0 * abs(di_p - di_m) / den
+
+    # Wilder 누적합 평활
+    s_pdm = sum(plus_dm[:period])
+    s_mdm = sum(minus_dm[:period])
+    s_tr  = sum(trs[:period])
+    dxs = [_dx(s_pdm, s_mdm, s_tr)]
+    for i in range(period, len(trs)):
+        s_pdm = s_pdm - s_pdm / period + plus_dm[i]
+        s_mdm = s_mdm - s_mdm / period + minus_dm[i]
+        s_tr  = s_tr  - s_tr  / period + trs[i]
+        dxs.append(_dx(s_pdm, s_mdm, s_tr))
+
+    adx_val = sum(dxs[:period]) / period
+    out = [adx_val]
+    for i in range(period, len(dxs)):
+        adx_val = (adx_val * (period - 1) + dxs[i]) / period
+        out.append(adx_val)
+
+    return [0.0] * (n - len(out)) + out
+
+
+# ------------------------------------------------------------------ #
 # 슈퍼트렌드
 # ------------------------------------------------------------------ #
 

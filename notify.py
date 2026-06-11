@@ -36,9 +36,9 @@ def alert_entry(direction: str, entry: float,
         f"진입가: <b>${entry:,.4f}</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"🛑 SL:  ${sl:,.4f}\n"
-        f"🎯 TP1: ${tp1:,.4f}  (1:1)\n"
-        f"🎯 TP2: ${tp2:,.4f}  (1:2)\n"
-        f"🏆 TP3: ${tp3:,.4f}  (1:3)\n"
+        f"🎯 TP1: ${tp1:,.4f}  (1R)\n"
+        f"🎯 TP2: ${tp2:,.4f}  (2R)\n"
+        f"🏆 TP3: EMA50 트레일링\n"
         f"━━━━━━━━━━━━━━\n"
         f"수량: {qty} {coin}  |  잔고: ${balance:.2f}"
     )
@@ -119,6 +119,18 @@ def alert_trailing_close(direction: str, symbol: str, entry: float, exit_p: floa
     )
 
 
+def alert_time_stop(direction: str, symbol: str, entry: float, exit_p: float, pnl: float):
+    """시간손절 — TP1 미달성 장시간 경과 + 손실 구간 → 논리 붕괴로 청산."""
+    coin = _coin(symbol)
+    pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+    send(
+        f"⏱️ <b>시간손절</b>  {coin}/USDT  {direction}\n"
+        f"${entry:,.4f} → ${exit_p:,.4f}\n"
+        f"PnL: <b>{pnl_str} USDT</b>\n"
+        f"8시간 내 TP1 미달성 + 손실 구간 → 논리 붕괴 청산"
+    )
+
+
 def alert_error(msg: str):
     send(f"⚠️ <b>봇 오류</b>\n{msg[:200]}")
 
@@ -136,10 +148,11 @@ def alert_start(symbol: str, leverage: int, risk_pct: float, scan_count: int = 1
     else:
         symbol_text = symbol
     send(
-        f"🤖 <b>오토선물봇 시작</b>\n"
+        f"🤖 <b>오토선물봇 시작 (v3)</b>\n"
         f"심볼: {symbol_text}\n"
         f"레버리지: {leverage}x\n"
         f"리스크: {risk_pct*100:.1f}%\n"
         f"전략: 4H EMA50/200 추세 + 15M EMA50 눌림목\n"
-        f"TP: TP1=1R / TP2=2R + 나머지 EMA50 트레일링 (TP1 후 본전 SL)"
+        f"게이트: 거래량·추격금지·ATR플로어·펀딩비·변동성\n"
+        f"TP: 1R/2R + EMA50 트레일링 | 시간손절 8h | 일일 4회 한도"
     )

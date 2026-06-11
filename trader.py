@@ -23,7 +23,7 @@ class Trader:
         return self._instrument_cache[symbol]
 
     def run_cycle(self, signal: Signal = None, balance: float = 0.0,
-                  symbol: str = None) -> "TradeParams | None":
+                  symbol: str = None, consecutive_losses: int = 0) -> "TradeParams | None":
         """
         포지션 확인 → 진입 주문 → TP1/TP2/TP3 지정가 배치.
         성공 시 TradeParams 반환, 실패/스킵 시 None.
@@ -45,7 +45,8 @@ class Trader:
 
         min_qty, qty_step = self._get_instrument_info(sym)
         params: TradeParams | None = calc_trade(
-            signal, balance, self.cfg, min_qty, qty_step
+            signal, balance, self.cfg, min_qty, qty_step,
+            consecutive_losses=consecutive_losses,
         )
         if params is None:
             return None

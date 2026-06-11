@@ -10,9 +10,10 @@ from config import Config
 from client import BybitClient
 from trader import Trader
 from guard import TradeGuard, load_state, save_state
+from risk import funding_blocks, time_stop_hit
 from notify import (alert_start, alert_error, alert_counter_close,
                     alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl,
-                    alert_trailing_close)
+                    alert_trailing_close, alert_time_stop)
 
 # TTY 여부 감지 — 클라우드 서버는 터미널 없음
 IS_TTY = sys.stdout.isatty()
@@ -102,6 +103,7 @@ def _handle_partial_close(pos, prev_pos, client, cfg):
             "entry_qty":   float(prev_pos.get("size", 0)),
             "tp_count":    0,
             "side":        prev_pos.get("side", "Buy"),
+            "entry_ts":    time.time(),
         }
         ei = STATUS["entry_info"]
         log.info("봇 재시작 후 포지션 복구 (%s)", sym)
@@ -246,24 +248,36 @@ def make_job(trader, client, cfg, guard):
                         try:
                             c15m = client.get_klines(symbol=sym)
                             c1h  = client.get_klines(interval=cfg.htf_interval, symbol=sym)
-                            sig  = analyze(c15m, cfg, c1h)
+                            sig  = analyze(c15m, cfg, c1h,
+                                           consecutive_losses=guard.consecutive_losses)
                         except Exception as e:
                             log.warning("스캔 실패 (%s): %s", sym, e)
                             continue
 
                         if sig:
+                            # 펀딩비 게이트 — 진입 방향에 불리한 펀딩이면 스킵
+                            fr = client.get_funding_rate(sym)
+                            if funding_blocks(sig.direction, fr, cfg.funding_gate_abs):
+                                log.info("펀딩비 불리 (%s %.4f%%) — %s 진입 스킵",
+                                         sym, fr * 100, sig.direction)
+                                continue
+
                             direction = "롱" if sig.direction == "long" else "숏"
                             STATUS["last_signal"] = f"{sym} {direction} @ ${sig.entry_price:,.4f}"
                             STATUS["last_action"] = "주문 진행 중"
-                            params = trader.run_cycle(sig, balance, symbol=sym)
+                            params = trader.run_cycle(
+                                sig, balance, symbol=sym,
+                                consecutive_losses=guard.consecutive_losses)
                             if params:
                                 # 진입 성공 → entry_info 저장 (디스크에도 영속화)
+                                guard.record_entry()
                                 STATUS["entry_info"] = {
                                     "symbol":      sym,
                                     "entry_price": sig.entry_price,
                                     "entry_qty":   params.qty,
                                     "tp_count":    0,
                                     "side":        params.side,
+                                    "entry_ts":    time.time(),
                                 }
                                 _persist_entry_info()
                                 STATUS["last_action"] = f"진입 완료 ({sym})"
@@ -297,27 +311,69 @@ def make_job(trader, client, cfg, guard):
                             (side == "Sell" and curr_p > ema50)
                         )
                         if triggered:
-                            remaining = float(pos["size"])
-                            direction = "롱" if side == "Buy" else "숏"
-                            # 청산 먼저 → 그다음 미체결 정리 (실패 시 무방비 방지)
-                            client.close_position(side, remaining, symbol=sym)
-                            client.cancel_all_orders(symbol=sym)
-                            closed    = client.get_last_closed_pnl(symbol=sym)
-                            pnl       = float(closed.get("closedPnl", 0)) if closed else 0.0
-                            alert_trailing_close(direction, sym,
-                                                 ei["entry_price"], curr_p, pnl)
-                            log.info("📈 EMA50 트레일링 청산 (%s) @ %.4f", sym, curr_p)
-                            # 트레일링은 TP1+TP2 확보 후 단계(tp_count>=2) → 손실로 세지 않음
-                            guard.record_result(max(pnl, 0.0), balance)
-                            STATUS["counter_closed"] = True   # 다음 사이클 이중처리 방지
-                            STATUS["entry_info"]  = None
-                            _persist_entry_info()
-                            STATUS["last_action"] = "트레일링 청산 📈"
+                            # TP 체결 레이스 방지 — 청산 직전 포지션 재조회
+                            # (사이클 시작 후 TP 지정가가 체결됐으면 size가 변함)
+                            fresh = client.get_position(sym)
+                            if not fresh:
+                                log.info("트레일링 청산 스킵 (%s) — 포지션 이미 청산됨", sym)
+                            else:
+                                remaining = float(fresh["size"])
+                                direction = "롱" if side == "Buy" else "숏"
+                                # 청산 먼저 → 그다음 미체결 정리 (실패 시 무방비 방지)
+                                client.close_position(side, remaining, symbol=sym)
+                                client.cancel_all_orders(symbol=sym)
+                                closed = client.get_last_closed_pnl(symbol=sym)
+                                pnl    = float(closed.get("closedPnl", 0)) if closed else 0.0
+                                alert_trailing_close(direction, sym,
+                                                     ei["entry_price"], curr_p, pnl)
+                                log.info("📈 EMA50 트레일링 청산 (%s) @ %.4f", sym, curr_p)
+                                # 트레일링은 TP1+TP2 확보 후 단계(tp_count>=2) → 손실로 세지 않음
+                                guard.record_result(max(pnl, 0.0), balance)
+                                STATUS["counter_closed"] = True   # 다음 사이클 이중처리 방지
+                                STATUS["entry_info"]  = None
+                                _persist_entry_info()
+                                STATUS["last_action"] = "트레일링 청산 📈"
                     except Exception as e:
                         log.warning("트레일링 스탑 체크 실패: %s", e)
 
+                # 시간손절 — TP1 미달성 8시간 + 진입가 대비 -0.5% → 논리 붕괴
+                if ei and STATUS.get("entry_info") and ei.get("tp_count", 0) == 0:
+                    entry_ts = ei.get("entry_ts", 0.0)
+                    elapsed_ok = (entry_ts > 0 and
+                                  time.time() - entry_ts >= cfg.time_stop_hours * 3600)
+                    if elapsed_ok:
+                        try:
+                            sym  = ei["symbol"]
+                            mark = client.get_ticker(sym)
+                            if time_stop_hit(entry_ts, time.time(), ei["tp_count"],
+                                             ei["entry_price"], mark, ei["side"], cfg):
+                                # TP 체결 레이스 방지 — 청산 직전 포지션 재조회
+                                fresh = client.get_position(sym)
+                                if not fresh:
+                                    log.info("시간손절 스킵 (%s) — 포지션 이미 청산됨", sym)
+                                else:
+                                    remaining = float(fresh["size"])
+                                    direction = "롱" if ei["side"] == "Buy" else "숏"
+                                    pnl_est   = (mark - ei["entry_price"]) * remaining
+                                    if ei["side"] == "Sell":
+                                        pnl_est = -pnl_est
+                                    log.warning("⏱️ 시간손절 (%s) — %.1f시간 경과, TP1 미달성, "
+                                                "PnL est $%.2f → 전량 청산",
+                                                sym, (time.time() - entry_ts) / 3600, pnl_est)
+                                    client.close_position(ei["side"], remaining, symbol=sym)
+                                    client.cancel_all_orders(symbol=sym)
+                                    alert_time_stop(direction, sym,
+                                                    ei["entry_price"], mark, pnl_est)
+                                    guard.record_result(pnl_est, balance)
+                                    STATUS["counter_closed"] = True
+                                    STATUS["entry_info"]     = None
+                                    _persist_entry_info()
+                                    STATUS["last_action"]    = "시간손절 ⏱️"
+                        except Exception as e:
+                            log.warning("시간손절 체크 실패: %s", e)
+
                 # 역신호 감지 → 즉시 전량 청산
-                if ei and STATUS.get("entry_info"):  # 트레일링에서 이미 청산 안 됐으면
+                if ei and STATUS.get("entry_info"):  # 위에서 이미 청산 안 됐으면
                     try:
                         from strategy import current_direction
                         sym      = ei["symbol"]
@@ -327,29 +383,35 @@ def make_job(trader, client, cfg, guard):
                         pos_dir  = 1 if ei["side"] == "Buy" else -1
 
                         if curr_dir != 0 and curr_dir != pos_dir:
-                            direction  = "롱" if ei["side"] == "Buy" else "숏"
-                            mark       = client.get_ticker(sym)
-                            remaining  = float(pos["size"])
-                            pnl_est    = (mark - ei["entry_price"]) * remaining
-                            if ei["side"] == "Sell":
-                                pnl_est = -pnl_est
+                            # TP 체결 레이스 방지 — 청산 직전 포지션 재조회
+                            fresh = client.get_position(sym)
+                            if not fresh:
+                                log.info("역신호 청산 스킵 (%s) — 포지션 이미 청산됨", sym)
+                            else:
+                                direction  = "롱" if ei["side"] == "Buy" else "숏"
+                                mark       = client.get_ticker(sym)
+                                remaining  = float(fresh["size"])
+                                pnl_est    = (mark - ei["entry_price"]) * remaining
+                                if ei["side"] == "Sell":
+                                    pnl_est = -pnl_est
 
-                            log.warning(
-                                "🔄 역신호 감지 (%s) — dir=%+d, pos=%+d → 전량 청산",
-                                sym, curr_dir, pos_dir,
-                            )
-                            # 청산 먼저 → 그다음 TP 지정가 정리
-                            client.close_position(ei["side"], remaining, symbol=sym)
-                            client.cancel_all_orders(symbol=sym)
-                            alert_counter_close(direction, sym,
-                                                ei["entry_price"], mark, pnl_est)
-                            # TP1을 이미 확보(tp_count>=1)했으면 본전 이상이므로 손실로 안 셈
-                            guard_pnl_cs = pnl_est if ei["tp_count"] == 0 else max(pnl_est, 0.0)
-                            guard.record_result(guard_pnl_cs, balance)
-                            STATUS["counter_closed"] = True
-                            STATUS["entry_info"]     = None
-                            _persist_entry_info()
-                            STATUS["last_action"]    = "역신호 청산 🔄"
+                                log.warning(
+                                    "🔄 역신호 감지 (%s) — dir=%+d, pos=%+d → 전량 청산",
+                                    sym, curr_dir, pos_dir,
+                                )
+                                # 청산 먼저 → 그다음 TP 지정가 정리
+                                client.close_position(ei["side"], remaining, symbol=sym)
+                                client.cancel_all_orders(symbol=sym)
+                                alert_counter_close(direction, sym,
+                                                    ei["entry_price"], mark, pnl_est)
+                                # TP1 확보(tp_count>=1) 후엔 본전 이상 → 손실로 안 셈
+                                guard_pnl_cs = (pnl_est if ei["tp_count"] == 0
+                                                else max(pnl_est, 0.0))
+                                guard.record_result(guard_pnl_cs, balance)
+                                STATUS["counter_closed"] = True
+                                STATUS["entry_info"]     = None
+                                _persist_entry_info()
+                                STATUS["last_action"]    = "역신호 청산 🔄"
                     except Exception as e:
                         log.warning("역신호 체크 실패: %s", e)
 
@@ -412,6 +474,8 @@ def main():
         if (persisted and persisted.get("symbol") == sym
                 and persisted.get("side") == side):
             # 저장된 정확한 상태로 복구 (entry_qty / tp_count 보존)
+            # 구버전 상태 파일에 entry_ts가 없으면 지금 시각으로 (시간손절 리셋 — 안전)
+            persisted.setdefault("entry_ts", time.time())
             STATUS["entry_info"] = persisted
             log.info("저장된 상태로 포지션 복구 — %s %s tp_count=%d entry_qty=%s",
                      sym, side, persisted.get("tp_count", 0), persisted.get("entry_qty"))
@@ -424,6 +488,7 @@ def main():
             STATUS["entry_info"] = {
                 "symbol": sym, "entry_price": entry,
                 "entry_qty": size, "tp_count": inferred_tp, "side": side,
+                "entry_ts": time.time(),   # 진입 시각 불명 → 지금부터 계산 (안전)
             }
             log.info("저장 상태 없음 — 포지션으로 복구 (tp_count 추정=%d, entry_qty≈현재크기) %s %s @ %.4f",
                      inferred_tp, sym, side, entry)

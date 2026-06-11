@@ -58,6 +58,7 @@ class TradeGuard:
         self.day_realized_pnl = float(g.get("day_realized_pnl", 0.0))
         self.consecutive_losses = int(g.get("consecutive_losses", 0))
         self.halted_until = float(g.get("halted_until", 0.0))
+        self.trades_today = int(g.get("trades_today", 0))
 
     def _roll_day(self, balance: float):
         today = _utc_today()
@@ -67,7 +68,8 @@ class TradeGuard:
             self.day_realized_pnl = 0.0
             self.consecutive_losses = 0
             self.halted_until = 0.0
-            log.info("UTC 날짜 변경 — 일일 손익/연속손절 카운터 리셋")
+            self.trades_today = 0
+            log.info("UTC 날짜 변경 — 일일 손익/연속손절/진입횟수 카운터 리셋")
             self.persist()
         if self.day_start_balance <= 0 and balance > 0:
             self.day_start_balance = balance
@@ -92,7 +94,18 @@ class TradeGuard:
                 return False, (f"일일 손실 한도(-{self.cfg.daily_loss_limit_pct * 100:.0f}%) "
                                f"도달 — 오늘 진입 정지")
 
+        max_trades = getattr(self.cfg, "max_trades_per_day", 0)
+        if max_trades > 0 and self.trades_today >= max_trades:
+            return False, (f"일일 진입 한도({max_trades}회) 도달 — 과매매 방지, "
+                           f"다음 UTC 날짜에 자동 해제")
+
         return True, "ok"
+
+    def record_entry(self):
+        """진입 1건 기록 — 일일 진입 횟수 카운터."""
+        self.trades_today += 1
+        log.info("진입 기록 — 오늘 %d회째", self.trades_today)
+        self.persist()
 
     def record_result(self, pnl: float, balance: float):
         """청산 결과 1건 기록. pnl<0이면 연속손절 +1 및 쿨다운."""
@@ -117,5 +130,6 @@ class TradeGuard:
             "day_realized_pnl": self.day_realized_pnl,
             "consecutive_losses": self.consecutive_losses,
             "halted_until": self.halted_until,
+            "trades_today": self.trades_today,
         }
         save_state(self._state)

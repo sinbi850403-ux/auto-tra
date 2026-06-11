@@ -59,6 +59,37 @@ class Config:
     sl_max_pct: float = 0.05         # SL 최대 거리 5% 초과 시 진입 금지
     max_momentum_pct: float = 0.04   # 최근 3캔들 급등/급락 4% 초과 시 추격 금지
 
+    # --- v3 진입 품질 게이트 (엘리트 트레이더 패널 합의) ---
+    atr_period: int = 14                 # ATR/변동성 게이트 기간
+    atr_sl_floor_mult: float = 0.8       # SL 거리 최소 0.8×ATR (노이즈 안 손절 방지)
+    atr_vol_gate_pct: float = 0.03       # 15M ATR가 가격의 3% 초과 → 극단 변동성, 진입 금지
+    vol_floor_ratio: float = 0.8         # 신호봉 거래량 ≥ 0.8×SMA20 (저유동성 반전 거부)
+    vol_avg_len: int = 20                # 거래량 평균 길이
+    ema_extension_cap_pct: float = 0.02  # 진입가가 15M EMA50에서 2% 초과 이탈 → 추격 금지
+
+    # --- v3 손절 버퍼 (연속 손절 후 휩쏘 방지) ---
+    per_loss_buffer_add_pct: float = 0.0005  # 연속 손절 1회당 버퍼 +0.05%p
+    max_sl_buffer_pct: float = 0.003         # 버퍼 상한 0.3%
+
+    # --- v3 펀딩비 게이트 ---
+    funding_gate_abs: float = 0.0005     # 진입 방향에 불리한 펀딩비 0.05% 초과 → 스킵
+
+    # --- v3 수수료 방어 ---
+    min_notional_usd: float = 2.0        # 명목가치 $2 미만 거래 거부 (수수료가 엣지 잠식)
+
+    # --- v3 과매매 방지 ---
+    max_trades_per_day: int = 4          # UTC 일일 최대 진입 횟수
+
+    # --- v3 시간손절 ---
+    time_stop_hours: float = 8.0         # TP1 미달성 8시간 경과 +
+    time_stop_pnl_pct: float = -0.005    # 가격이 진입가 대비 -0.5% 이하 → 논리 붕괴, 청산
+
+    # --- v3 드로다운 사이징 (기본 OFF — $28 계좌에선 최소 수량 미달 위험) ---
+    risk_scale_enabled: bool = field(
+        default_factory=lambda: os.getenv("RISK_SCALE_ENABLED", "false").lower() == "true")
+    risk_scale_after_loss: float = 0.5   # 연속 손절마다 리스크 ×0.5
+    risk_scale_floor: float = 0.25       # 바닥: 기본 리스크의 25%
+
     # --- 실행 주기 ---
     check_interval_sec: int = 60  # 1분마다 신호 확인
 

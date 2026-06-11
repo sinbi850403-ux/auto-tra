@@ -307,6 +307,16 @@ class BybitClient:
         resp = _safe_call(lambda: self.session.get_tickers(category="linear", symbol=sym))
         return float(resp["result"]["list"][0]["markPrice"])
 
+    def get_funding_rate(self, symbol: str = None) -> float:
+        """현재 펀딩비 반환 (양수 = 롱이 숏에게 지불). 조회 실패 시 0.0 (게이트 미발동)."""
+        sym = symbol or self.cfg.symbol
+        try:
+            resp = _safe_call(lambda: self.session.get_tickers(category="linear", symbol=sym))
+            return float(resp["result"]["list"][0].get("fundingRate") or 0.0)
+        except Exception as e:
+            log.warning("펀딩비 조회 실패 (%s): %s", sym, e)
+            return 0.0
+
     def get_last_closed_pnl(self, symbol: str = None) -> Optional[dict]:
         """가장 최근 청산된 포지션 정보 반환. symbol 미지정 시 전체 조회."""
         try:
