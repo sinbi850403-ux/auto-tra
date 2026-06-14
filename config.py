@@ -43,9 +43,9 @@ class Config:
         default_factory=lambda: int(os.getenv("COOLDOWN_AFTER_LOSS_MIN", "30")))
 
     # --- TP 배율 (손절폭 기준) ---
-    tp1_r: float = 1.0   # TP1: 손절폭 1배
-    tp2_r: float = 2.0   # TP2: 손절폭 2배
-    # TP3: EMA50 이탈 시 트레일링 청산 (지정가 없음)
+    tp1_r: float = 1.5   # TP1: 손절폭 1.5배
+    tp2_r: float = 3.0   # TP2: 손절폭 3배
+    # TP3: EMA50 이탈 시 트레일링 청산 (지정가 없음 — 무제한 추종)
 
     # --- EMA 파라미터 ---
     ema_fast: int = 50    # EMA50 (진입 기준선)
@@ -60,7 +60,7 @@ class Config:
     rsi_period: int = 14             # RSI 기간
 
     # --- 공통 필터 ---
-    sl_max_pct: float = 0.05         # SL 최대 거리 5% 초과 시 진입 금지
+    sl_max_pct: float = 0.02         # SL 최대 거리 2% 초과 시 진입 금지 (손실 빠르게 차단)
 
     # --- v3 진입 품질 게이트 ---
     atr_period: int = 14                 # ATR 기간
