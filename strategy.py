@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from config import Config
-from indicators import ema, atr, rsi, bollinger_bands
+from indicators import ema, atr, rsi, adx, bollinger_bands
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,15 @@ def analyze(candles_15m: list, cfg: Config,
     closes_4h = [c["close"] for c in candles_4h]
     ema50_4h  = ema(closes_4h, cfg.ema_fast)[-1]
     ema200_4h = ema(closes_4h, cfg.ema_slow)[-1]
-    htf_bull  = ema50_4h > ema200_4h
+    adx_4h    = adx(candles_4h, cfg.adx_period)[-1]
+    price_4h  = candles_4h[-1]["close"]
+
+    # ADX 추세 강도 확인 — 횡보장 진입 차단
+    if adx_4h < cfg.adx_threshold:
+        log.debug("4H ADX=%.1f < %.0f — 추세 없음, 스킵", adx_4h, cfg.adx_threshold)
+        return None
+
+    htf_bull = ema50_4h > ema200_4h
 
     # ── 15분봉 지표 계산 ──────────────────────────────────────────
     closes_15m  = [c["close"] for c in candles_15m]
@@ -113,7 +121,8 @@ def analyze(candles_15m: list, cfg: Config,
     buf = _sl_buffer(cfg, consecutive_losses)
 
     # ── 롱: 상단BB 돌파 ───────────────────────────────────────────
-    if htf_bull and close > curr_upper and curr_rsi > 50:
+    # 가격이 4H EMA50 위에 있어야 추세와 동행
+    if htf_bull and price_4h > ema50_4h and close > curr_upper and curr_rsi > 50:
         # SL = 하단BB 아래, ATR 플로어 이상
         struct_sl = curr_lower * (1 - buf)
         sl_dist   = max(close - struct_sl, cfg.atr_sl_floor_mult * atr_val)
@@ -130,7 +139,8 @@ def analyze(candles_15m: list, cfg: Config,
         return Signal("long", close, sl)
 
     # ── 숏: 하단BB 붕괴 ───────────────────────────────────────────
-    if not htf_bull and close < curr_lower and curr_rsi < 50:
+    # 가격이 4H EMA50 아래에 있어야 추세와 동행
+    if not htf_bull and price_4h < ema50_4h and close < curr_lower and curr_rsi < 50:
         struct_sl = curr_upper * (1 + buf)
         sl_dist   = max(struct_sl - close, cfg.atr_sl_floor_mult * atr_val)
         sl        = close + sl_dist

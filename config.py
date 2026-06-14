@@ -62,6 +62,10 @@ class Config:
     # --- 공통 필터 ---
     sl_max_pct: float = 0.02         # SL 최대 거리 2% 초과 시 진입 금지 (손실 빠르게 차단)
 
+    # --- 추세 추종 필터 ---
+    adx_period: int = 14             # ADX 계산 기간
+    adx_threshold: float = 20.0      # 4H ADX < 20 → 추세 없음 → 진입 금지
+
     # --- v3 진입 품질 게이트 ---
     atr_period: int = 14                 # ATR 기간
     atr_sl_floor_mult: float = 0.8       # SL 거리 최소 0.8×ATR (노이즈 안 손절 방지)
