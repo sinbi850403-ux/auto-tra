@@ -297,45 +297,50 @@ def make_job(trader, client, cfg, guard):
                 tp_label = f" (TP{ei['tp_count']} 달성)" if ei and ei["tp_count"] > 0 else ""
                 STATUS["last_action"] = f"홀딩 중{tp_label}"
 
-                # TP2 이후 — EMA50 트레일링 스탑 (나머지 1/3 포지션)
+                # TP2 이후 — Chandelier Exit 트레일링 스탑 (나머지 1/3 포지션)
                 if ei and ei["tp_count"] >= 2:
                     try:
-                        from indicators import ema as calc_ema
-                        sym      = ei["symbol"]
-                        c15m_tr  = client.get_klines(symbol=sym)
-                        closes   = [c["close"] for c in c15m_tr]
-                        ema50    = calc_ema(closes, cfg.ema_fast)[-1]
-                        curr_p   = c15m_tr[-1]["close"]
-                        side     = ei["side"]
-                        triggered = (
-                            (side == "Buy"  and curr_p < ema50) or
-                            (side == "Sell" and curr_p > ema50)
-                        )
+                        from indicators import chandelier_exit
+                        sym     = ei["symbol"]
+                        c15m_tr = client.get_klines(symbol=sym)
+                        side    = ei["side"]
+                        curr_p  = c15m_tr[-1]["close"]
+
+                        ce_long, ce_short = chandelier_exit(
+                            c15m_tr, cfg.ce_period, cfg.ce_mult)
+
+                        if side == "Buy":
+                            triggered = curr_p < ce_long[-1]
+                            ce_level  = ce_long[-1]
+                        else:
+                            triggered = curr_p > ce_short[-1]
+                            ce_level  = ce_short[-1]
+
+                        log.debug("CE 트레일링 — %s side=%s 가격=%.4f CE=%.4f triggered=%s",
+                                  sym, side, curr_p, ce_level, triggered)
+
                         if triggered:
-                            # TP 체결 레이스 방지 — 청산 직전 포지션 재조회
-                            # (사이클 시작 후 TP 지정가가 체결됐으면 size가 변함)
                             fresh = client.get_position(sym)
                             if not fresh:
-                                log.info("트레일링 청산 스킵 (%s) — 포지션 이미 청산됨", sym)
+                                log.info("CE 트레일링 청산 스킵 (%s) — 포지션 이미 청산됨", sym)
                             else:
                                 remaining = float(fresh["size"])
                                 direction = "롱" if side == "Buy" else "숏"
-                                # 청산 먼저 → 그다음 미체결 정리 (실패 시 무방비 방지)
                                 client.close_position(side, remaining, symbol=sym)
                                 client.cancel_all_orders(symbol=sym)
                                 closed = client.get_last_closed_pnl(symbol=sym)
                                 pnl    = float(closed.get("closedPnl", 0)) if closed else 0.0
                                 alert_trailing_close(direction, sym,
                                                      ei["entry_price"], curr_p, pnl)
-                                log.info("📈 EMA50 트레일링 청산 (%s) @ %.4f", sym, curr_p)
-                                # 트레일링은 TP1+TP2 확보 후 단계(tp_count>=2) → 손실로 세지 않음
+                                log.info("📈 Chandelier Exit 트레일링 청산 (%s) @ %.4f CE=%.4f",
+                                         sym, curr_p, ce_level)
                                 guard.record_result(max(pnl, 0.0), balance)
-                                STATUS["counter_closed"] = True   # 다음 사이클 이중처리 방지
+                                STATUS["counter_closed"] = True
                                 STATUS["entry_info"]  = None
                                 _persist_entry_info()
-                                STATUS["last_action"] = "트레일링 청산 📈"
+                                STATUS["last_action"] = "CE 트레일링 청산 📈"
                     except Exception as e:
-                        log.warning("트레일링 스탑 체크 실패: %s", e)
+                        log.warning("Chandelier Exit 체크 실패: %s", e)
 
                 # 시간손절 — TP1 미달성 8시간 + 진입가 대비 -0.5% → 논리 붕괴
                 if ei and STATUS.get("entry_info") and ei.get("tp_count", 0) == 0:

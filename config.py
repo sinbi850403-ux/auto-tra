@@ -45,7 +45,11 @@ class Config:
     # --- TP 배율 (손절폭 기준) ---
     tp1_r: float = 1.5   # TP1: 손절폭 1.5배
     tp2_r: float = 3.0   # TP2: 손절폭 3배
-    # TP3: EMA50 이탈 시 트레일링 청산 (지정가 없음 — 무제한 추종)
+    # TP3: Chandelier Exit 트레일링 청산 (고점 추종, 무제한)
+
+    # --- Chandelier Exit 트레일링 스탑 (TP3) ---
+    ce_period: int = 22      # 고점/저점 + ATR 계산 기간 (표준 22)
+    ce_mult: float = 3.0     # ATR 배수 (표준 3.0 — 넓을수록 추세 더 길게 탐)
 
     # --- EMA 파라미터 ---
     ema_fast: int = 50    # EMA50 (진입 기준선)

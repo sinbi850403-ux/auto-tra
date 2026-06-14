@@ -122,6 +122,42 @@ def adx(candles: list, period: int = 14) -> List[float]:
 
 
 # ------------------------------------------------------------------ #
+# Chandelier Exit (샹들리에 트레일링 스탑)
+# ------------------------------------------------------------------ #
+
+def chandelier_exit(
+    candles: list,
+    period: int = 22,
+    mult: float = 3.0,
+):
+    """
+    Chandelier Exit 트레일링 스탑 계산.
+
+    ce_long  = highest_high(period) - ATR(period) × mult
+    ce_short = lowest_low(period)   + ATR(period) × mult
+
+    롱 청산 조건: 가격 < ce_long
+    숏 청산 조건: 가격 > ce_short
+    """
+    atr_vals = atr(candles, period)
+    n = len(candles)
+    ce_long, ce_short = [], []
+
+    for i in range(n):
+        if i < period - 1:
+            ce_long.append(candles[i]["high"])
+            ce_short.append(candles[i]["low"])
+        else:
+            window   = candles[i - period + 1: i + 1]
+            h_high   = max(c["high"] for c in window)
+            l_low    = min(c["low"]  for c in window)
+            ce_long.append(h_high - mult * atr_vals[i])
+            ce_short.append(l_low  + mult * atr_vals[i])
+
+    return ce_long, ce_short
+
+
+# ------------------------------------------------------------------ #
 # 볼린저밴드
 # ------------------------------------------------------------------ #
 
