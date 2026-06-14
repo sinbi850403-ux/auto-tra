@@ -122,54 +122,42 @@ def adx(candles: list, period: int = 14) -> List[float]:
 
 
 # ------------------------------------------------------------------ #
-# 슈퍼트렌드
+# 볼린저밴드
 # ------------------------------------------------------------------ #
 
-@dataclass
-class SupertrendResult:
-    direction: List[int]   # +1 = 상승, -1 = 하락
-    line: List[float]      # 슈퍼트렌드 라인 값
+from typing import Tuple
 
-
-def supertrend(candles: list, cfg: Config) -> SupertrendResult:
-    atr_vals = atr(candles, cfg.st_atr_period)
-    n = len(candles)
-
-    upper = [0.0] * n
-    lower = [0.0] * n
-    direction = [1] * n
-    line = [0.0] * n
-
-    for i in range(n):
-        hl2 = (candles[i]["high"] + candles[i]["low"]) / 2
-        basic_upper = hl2 + cfg.st_multiplier * atr_vals[i]
-        basic_lower = hl2 - cfg.st_multiplier * atr_vals[i]
-
-        if i == 0:
-            upper[i] = basic_upper
-            lower[i] = basic_lower
+def bollinger_bands(
+    closes: List[float],
+    period: int = 20,
+    std_dev: float = 2.0,
+) -> Tuple[List[float], List[float], List[float], List[float]]:
+    """
+    Returns (upper, middle, lower, width).
+    period 미만 인덱스는 closes[i]로 패딩 (width=0).
+    """
+    upper, middle, lower, width = [], [], [], []
+    for i in range(len(closes)):
+        if i < period - 1:
+            upper.append(closes[i])
+            middle.append(closes[i])
+            lower.append(closes[i])
+            width.append(0.0)
         else:
-            prev_close = candles[i - 1]["close"]
-            upper[i] = basic_upper if basic_upper < upper[i-1] or prev_close > upper[i-1] else upper[i-1]
-            lower[i] = basic_lower if basic_lower > lower[i-1] or prev_close < lower[i-1] else lower[i-1]
-
-        if i == 0:
-            direction[i] = 1
-        else:
-            prev_dir = direction[i - 1]
-            close = candles[i]["close"]
-            if prev_dir == -1:
-                direction[i] = 1 if close > upper[i] else -1
-            else:
-                direction[i] = -1 if close < lower[i] else 1
-
-        line[i] = lower[i] if direction[i] == 1 else upper[i]
-
-    return SupertrendResult(direction=direction, line=line)
+            window = closes[i - period + 1: i + 1]
+            mean = sum(window) / period
+            std = (sum((x - mean) ** 2 for x in window) / period) ** 0.5
+            u = mean + std_dev * std
+            l = mean - std_dev * std
+            upper.append(u)
+            middle.append(mean)
+            lower.append(l)
+            width.append(u - l)
+    return upper, middle, lower, width
 
 
 # ------------------------------------------------------------------ #
-# EMA200 추세 필터
+# 스윙 고점 / 저점
 # ------------------------------------------------------------------ #
 
 def swing_high(candles: list, lookback: int = 20) -> float:
@@ -216,61 +204,3 @@ def find_pullback_high(candles: list, ema50_series: List[float],
     return None
 
 
-def ema200(candles: list, cfg: Config) -> List[float]:
-    closes = [c["close"] for c in candles]
-    return ema(closes, cfg.ema_trend)
-
-
-# ------------------------------------------------------------------ #
-# 호환성 유지 (order_blocks.py 등이 사용)
-# ------------------------------------------------------------------ #
-
-def add_emas(candles: list, cfg: Config) -> list:
-    closes = [c["close"] for c in candles]
-    fast_vals = ema(closes, cfg.ema_fast)
-    slow_vals = ema(closes, cfg.ema_slow)
-    trend_vals = ema(closes, cfg.ema_trend)
-    for i, c in enumerate(candles):
-        c["ema_fast"]  = fast_vals[i]
-        c["ema_slow"]  = slow_vals[i]
-        c["ema_trend"] = trend_vals[i]
-    return candles
-
-
-def trend(candles: list) -> str:
-    last = candles[-1]
-    if last.get("ema_fast", 0) > last.get("ema_slow", 0) and last["close"] > last.get("ema_fast", 0):
-        return "bull"
-    if last.get("ema_fast", 0) < last.get("ema_slow", 0) and last["close"] < last.get("ema_fast", 0):
-        return "bear"
-    return "neutral"
-
-
-@dataclass
-class FibLevels:
-    swing_high: float
-    swing_low: float
-    direction: str
-    level_618: float
-    level_786: float
-    level_500: float
-
-
-def calc_fib(candles: list, cfg: Config, direction: str) -> Optional[FibLevels]:
-    window = candles[-cfg.fib_swing_lookback:]
-    high = max(c["high"] for c in window)
-    low  = min(c["low"]  for c in window)
-    rng  = high - low
-    if rng == 0:
-        return None
-    if direction == "bull":
-        return FibLevels(high, low, "bull",
-                         high - rng * 0.618, high - rng * 0.786, high - rng * 0.500)
-    return FibLevels(high, low, "bear",
-                     low + rng * 0.618, low + rng * 0.786, low + rng * 0.500)
-
-
-def price_in_fib_zone(price: float, fib: FibLevels) -> bool:
-    lo = min(fib.level_618, fib.level_786)
-    hi = max(fib.level_618, fib.level_786)
-    return lo <= price <= hi

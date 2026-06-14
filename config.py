@@ -51,21 +51,22 @@ class Config:
     ema_fast: int = 50    # EMA50 (진입 기준선)
     ema_slow: int = 200   # EMA200 (추세 기준선)
 
-    # --- 전략 필터 파라미터 ---
-    ema_gap_min_pct: float = 0.005   # 4H EMA50/200 최소 간격 (0.5% 미만 = 횡보)
-    ema_pullback_tol: float = 0.004  # EMA50 눌림 허용 오차 (0.4%)
-    swing_lookback: int = 20         # 직전 고점/저점 탐색 캔들 수
-    pullback_lookback: int = 10      # 눌림/반등 감지 캔들 수
-    sl_max_pct: float = 0.05         # SL 최대 거리 5% 초과 시 진입 금지
-    max_momentum_pct: float = 0.04   # 최근 3캔들 급등/급락 4% 초과 시 추격 금지
+    # --- BB 스퀴즈 전략 파라미터 ---
+    bb_period: int = 20              # 볼린저밴드 기간
+    bb_std: float = 2.0              # 볼린저밴드 표준편차 배수
+    squeeze_pct: float = 0.6         # 스퀴즈 임계값 (평균 BB폭의 60% 이하)
+    squeeze_min_bars: int = 3        # 스퀴즈 최소 지속 캔들 수
+    vol_mult: float = 1.5            # 진입 거래량 배율 (20봉 평균 대비)
+    rsi_period: int = 14             # RSI 기간
 
-    # --- v3 진입 품질 게이트 (엘리트 트레이더 패널 합의) ---
-    atr_period: int = 14                 # ATR/변동성 게이트 기간
+    # --- 공통 필터 ---
+    sl_max_pct: float = 0.05         # SL 최대 거리 5% 초과 시 진입 금지
+
+    # --- v3 진입 품질 게이트 ---
+    atr_period: int = 14                 # ATR 기간
     atr_sl_floor_mult: float = 0.8       # SL 거리 최소 0.8×ATR (노이즈 안 손절 방지)
-    atr_vol_gate_pct: float = 0.03       # 15M ATR가 가격의 3% 초과 → 극단 변동성, 진입 금지
-    vol_floor_ratio: float = 0.8         # 신호봉 거래량 ≥ 0.8×SMA20 (저유동성 반전 거부)
-    vol_avg_len: int = 20                # 거래량 평균 길이
-    ema_extension_cap_pct: float = 0.02  # 진입가가 15M EMA50에서 2% 초과 이탈 → 추격 금지
+    atr_vol_gate_pct: float = 0.03       # 15M ATR > 가격 × 3% → 극단 변동성, 진입 금지
+    vol_avg_len: int = 20                # 거래량 평균 기간
 
     # --- v3 손절 버퍼 (연속 손절 후 휩쏘 방지) ---
     per_loss_buffer_add_pct: float = 0.0005  # 연속 손절 1회당 버퍼 +0.05%p
@@ -94,29 +95,26 @@ class Config:
     check_interval_sec: int = 60  # 1분마다 신호 확인
 
     def validate(self):
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+
         if not self.api_key or not self.api_secret:
             raise ValueError("BYBIT_API_KEY / BYBIT_API_SECRET 환경변수가 설정되지 않았습니다.")
 
-        # 1회 리스크 하드 캡 — 경고가 아니라 차단
+        # 1회 리스크 하드 캡
         if self.risk_pct > self.risk_pct_hard_cap:
             raise ValueError(
                 f"RISK_PCT={self.risk_pct * 100:.1f}% 가 한도({self.risk_pct_hard_cap * 100:.1f}%)를 "
-                f"초과합니다. 1회 리스크는 1~2%를 권장합니다. .env의 RISK_PCT를 낮추세요."
+                f"초과합니다. RISK_PCT를 낮추세요."
             )
 
-        # 손절 전 강제청산 방지: 레버리지 × 최대손절폭이 너무 크면 손절이
-        # 작동하기 전에 청산당한다. (예: 20x × 5% = 1.0 → 청산 먼저)
+        # 레버리지 × 최대손절폭 경고 (차단 아님 — BB SL은 실제로 훨씬 짧음)
         lev_sl = self.leverage * self.sl_max_pct
         if lev_sl >= self.lev_sl_safety_limit:
-            # 실제로 통과하는(< 한도) 최대 레버리지를 정확히 계산
-            max_lev = int(self.lev_sl_safety_limit / self.sl_max_pct)
-            if max_lev * self.sl_max_pct >= self.lev_sl_safety_limit:
-                max_lev -= 1
-            max_lev = max(1, max_lev)
-            raise ValueError(
-                f"레버리지({self.leverage}x) × 최대손절폭({self.sl_max_pct * 100:.1f}%) = {lev_sl:.2f} 가 "
-                f"위험 한도({self.lev_sl_safety_limit})를 넘습니다. 손절이 작동하기 전에 강제청산될 수 있습니다. "
-                f"LEVERAGE를 {max_lev}x 이하로 낮추거나 sl_max_pct를 줄이세요."
+            _logger.warning(
+                "⚠️ 레버리지(%dx) × 최대SL폭(%.1f%%) = %.2f — SL이 BB 안쪽에 잡히면 "
+                "청산 전에 손절이 동작하지 않을 수 있습니다. 실제 SL은 보통 2~3%대입니다.",
+                self.leverage, self.sl_max_pct * 100, lev_sl
             )
 
         if self.daily_loss_limit_pct <= 0 or self.max_consecutive_losses <= 0:
