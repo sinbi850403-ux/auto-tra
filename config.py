@@ -66,9 +66,9 @@ class Config:
     adx_period: int = 14             # ADX 계산 기간
     adx_threshold: float = 20.0      # 4H ADX < 20 → 추세 없음 → 진입 금지
 
-    # --- v3 진입 품질 게이트 ---
-    atr_period: int = 14                 # ATR 기간
-    atr_sl_floor_mult: float = 0.8       # SL 거리 최소 0.8×ATR (노이즈 안 손절 방지)
+    # --- ATR 손절 ---
+    atr_period: int = 20                 # ATR 기간 (사용자 지정)
+    atr_sl_mult: float = 1.5             # SL = ATR × 1.5 (진입가 기준)
     atr_vol_gate_pct: float = 0.03       # 15M ATR > 가격 × 3% → 극단 변동성, 진입 금지
     vol_avg_len: int = 20                # 거래량 평균 기간
 

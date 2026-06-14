@@ -120,38 +120,34 @@ def analyze(candles_15m: list, cfg: Config,
     vol_ratio = curr_vol / vol_avg
     buf = _sl_buffer(cfg, consecutive_losses)
 
+    # ATR 기반 손절 거리 (연속 손절 시 버퍼 소폭 확대)
+    sl_dist = atr_val * cfg.atr_sl_mult * (1 + buf)
+
     # ── 롱: 상단BB 돌파 ───────────────────────────────────────────
     # 가격이 4H EMA50 위에 있어야 추세와 동행
     if htf_bull and price_4h > ema50_4h and close > curr_upper and curr_rsi > 50:
-        # SL = 하단BB 아래, ATR 플로어 이상
-        struct_sl = curr_lower * (1 - buf)
-        sl_dist   = max(close - struct_sl, cfg.atr_sl_floor_mult * atr_val)
-        sl        = close - sl_dist
-        sl_pct    = sl_dist / close
+        sl     = close - sl_dist
+        sl_pct = sl_dist / close
         if sl_pct > cfg.sl_max_pct:
-            log.debug("롱 SL %.2f%% 초과 — 스킵", sl_pct * 100)
+            log.debug("롱 ATR SL %.2f%% > %.0f%% — 스킵", sl_pct * 100, cfg.sl_max_pct * 100)
             return None
         log.info(
-            "🟢 롱 BB돌파 @ %.4f | 상단BB=%.4f 하단BB=%.4f | SL=%.4f(%.2f%%) "
-            "| RSI=%.1f | Vol=%.1fx | 4H↑",
-            close, curr_upper, curr_lower, sl, sl_pct * 100, curr_rsi, vol_ratio,
+            "🟢 롱 BB돌파 @ %.4f | SL=%.4f(ATR×%.1f=%.2f%%) | RSI=%.1f | Vol=%.1fx | ADX=%.1f | 4H↑",
+            close, sl, cfg.atr_sl_mult, sl_pct * 100, curr_rsi, vol_ratio, adx_4h,
         )
         return Signal("long", close, sl)
 
     # ── 숏: 하단BB 붕괴 ───────────────────────────────────────────
     # 가격이 4H EMA50 아래에 있어야 추세와 동행
     if not htf_bull and price_4h < ema50_4h and close < curr_lower and curr_rsi < 50:
-        struct_sl = curr_upper * (1 + buf)
-        sl_dist   = max(struct_sl - close, cfg.atr_sl_floor_mult * atr_val)
-        sl        = close + sl_dist
-        sl_pct    = sl_dist / close
+        sl     = close + sl_dist
+        sl_pct = sl_dist / close
         if sl_pct > cfg.sl_max_pct:
-            log.debug("숏 SL %.2f%% 초과 — 스킵", sl_pct * 100)
+            log.debug("숏 ATR SL %.2f%% > %.0f%% — 스킵", sl_pct * 100, cfg.sl_max_pct * 100)
             return None
         log.info(
-            "🔴 숏 BB붕괴 @ %.4f | 상단BB=%.4f 하단BB=%.4f | SL=%.4f(%.2f%%) "
-            "| RSI=%.1f | Vol=%.1fx | 4H↓",
-            close, curr_upper, curr_lower, sl, sl_pct * 100, curr_rsi, vol_ratio,
+            "🔴 숏 BB붕괴 @ %.4f | SL=%.4f(ATR×%.1f=%.2f%%) | RSI=%.1f | Vol=%.1fx | ADX=%.1f | 4H↓",
+            close, sl, cfg.atr_sl_mult, sl_pct * 100, curr_rsi, vol_ratio, adx_4h,
         )
         return Signal("short", close, sl)
 
