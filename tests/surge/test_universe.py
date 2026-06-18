@@ -79,10 +79,17 @@ def test_insufficient_data_excluded():
 
 
 def test_limit_up_today_excluded():
-    # 직전 5000 → 당일 5900 (+18% ≥ 15%) → 추격 금지
-    c = candles(close=5900.0, prev_close=5000.0)
+    # 직전 5000 → 당일 5500 (+10% ≥ 7%) → 추격 금지
+    c = candles(close=5500.0, prev_close=5000.0)
     ok, why = passes_universe(meta(), c, CFG)
     assert not ok and why == "당일급등"
+
+
+def test_modest_gain_passes():
+    # +5% < 7% → 아직 초입이라 통과
+    c = candles(close=5250.0, prev_close=5000.0)
+    ok, _ = passes_universe(meta(), c, CFG)
+    assert ok
 
 
 # ---------------- 정상 통과 ----------------
