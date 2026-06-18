@@ -80,3 +80,21 @@ def filter_universe(metas_candles: List[Tuple[StockMeta, list]],
         if ok:
             out.append(meta.code)
     return out
+
+
+def prefilter_listings(listings: List[dict], cfg: SurgeConfig) -> List[dict]:
+    """StockListing 1차 필터 (시총·당일거래대금·가격) — 일봉 수급 전 종목 수를 줄여
+    Railway 안정성·첫 스캔 속도를 확보한다. 정밀 게이트는 일봉 확보 후 passes_universe."""
+    out = []
+    for it in listings:
+        if it.get("market_cap", 0) < cfg.min_market_cap_krw:
+            continue
+        if it.get("amount", 0) < cfg.min_avg_value_krw:    # 당일 거래대금 근사
+            continue
+        close = it.get("close", 0)
+        if close < cfg.min_price:
+            continue
+        if cfg.max_price is not None and close > cfg.max_price:
+            continue
+        out.append(it)
+    return out

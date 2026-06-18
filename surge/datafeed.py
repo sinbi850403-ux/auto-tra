@@ -97,9 +97,29 @@ class DataFeed:
             else stock.get_market_ticker_list(market=market)
 
     def fetch_market_cap(self, date: str):
-        """pykrx 시가총액 DataFrame (index=종목코드, '시가총액' 컬럼 포함)."""
+        """pykrx 시가총액 DataFrame (index=종목코드, '시가총액' 컬럼 포함). [deprecated: 해외 IP 차단]"""
         from pykrx import stock
         return stock.get_market_cap_by_ticker(date)
+
+    def fetch_stock_listing(self, market: str) -> List[dict]:
+        """FDR StockListing → [{code,name,market,market_cap,amount,close}].
+        pykrx 대체 — KRX 직접 접근이 해외 IP(Railway)에서 차단되므로 FDR 사용."""
+        import FinanceDataReader as fdr
+        df = fdr.StockListing(market)
+        out = []
+        for _, row in df.iterrows():
+            code = str(row.get("Code", "")).strip().zfill(6)
+            if not code or len(code) != 6 or code == "000000":
+                continue
+            out.append({
+                "code": code,
+                "name": str(row.get("Name", code)),
+                "market": market,
+                "market_cap": float(row.get("Marcap", 0) or 0),
+                "amount": float(row.get("Amount", 0) or 0),    # 당일 거래대금
+                "close": float(row.get("Close", 0) or 0),
+            })
+        return out
 
     # --- 캐시 결합 조회 (증분) ---
     def get_candles(self, code: str, start: str, end: str) -> List[dict]:
