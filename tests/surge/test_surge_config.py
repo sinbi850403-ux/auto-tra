@@ -56,5 +56,7 @@ def test_configs_are_independent():
     """field(default_factory)로 인스턴스마다 독립 dict인지 (mutable default 버그 방지)."""
     a = SurgeConfig()
     b = SurgeConfig()
-    a.w_short["F1"] = 0.99
-    assert b.w_short["F1"] == 0.30
+    key = next(iter(a.w_short))
+    original = b.w_short[key]
+    a.w_short[key] = 0.99
+    assert b.w_short[key] == original

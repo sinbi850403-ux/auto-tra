@@ -1,7 +1,8 @@
 """실데이터 워크포워드 백테스트 러너 — DESIGN_KR_SURGE_SCANNER.md 제5부 / T9·P4 게이트.
 
-핵심 로직(evaluate_symbol/aggregate/split_oos)은 test_backtest.py에서 검증됨.
+핵심 로직(evaluate_symbol/aggregate/split_oos/factor_diagnosis)은 test_backtest.py에서 검증됨.
 이 모듈은 네트워크 수급 + 집계 오케스트레이션 (run_scan과 동일 성격, 러너로 격리).
+캐시(get_candles)를 쓰므로 첫 실행만 데이터 수급, 이후 튜닝 재실행은 빠르다.
 
 사용:  python -m surge.backtest_runner
 """
@@ -13,6 +14,7 @@ from surge.surge_config import SurgeConfig
 from surge.datafeed import DataFeed
 from surge.backtest import (
     evaluate_symbol, aggregate, split_oos, check_pass, _to_yyyymmdd, _track_params,
+    factor_diagnosis,
 )
 
 log = logging.getLogger(__name__)
@@ -31,8 +33,8 @@ SYMBOLS: List[Tuple[str, str]] = [
 ]
 
 
-def run_real_backtest(cfg: SurgeConfig, start: str, end: str,
-                      symbols=None, step: int = 2, tracks=("short", "mid")) -> dict:
+def load_data(cfg: SurgeConfig, start: str, end: str, symbols=None):
+    """데이터 수급(캐시). (symbol_candles, market_of, index_by_market) 반환."""
     symbols = symbols or SYMBOLS
     feed = DataFeed(cfg)
     idx = {}
@@ -42,19 +44,23 @@ def run_real_backtest(cfg: SurgeConfig, start: str, end: str,
         except Exception as e:
             log.warning("지수 수급 실패 %s: %s", m, e)
             idx[m] = None
-
     symbol_candles, market_of = {}, {}
     need = cfg.min_candles + max(cfg.short_K, cfg.mid_K)
     for code, market in symbols:
         try:
-            c = feed.fetch_ohlcv(code, start, end)
+            c = feed.get_candles(code, start, end)        # 캐시 사용
         except Exception as e:
             log.warning("수급 실패 %s: %s", code, e)
             continue
         if len(c) >= need:
             symbol_candles[code] = c
             market_of[code] = market
+    return symbol_candles, market_of, idx
 
+
+def backtest_from_data(cfg, symbol_candles, market_of, idx,
+                       step=2, tracks=("short", "mid")) -> dict:
+    """이미 받아둔 데이터로 백테스트 — 데이터 재수급 없이 튜닝 반복용."""
     out = {"n_symbols": len(symbol_candles), "tracks": {}}
     for track in tracks:
         recs = []
@@ -67,9 +73,14 @@ def run_real_backtest(cfg: SurgeConfig, start: str, end: str,
         oos_agg = aggregate(oos, cfg)
         out["tracks"][track] = {
             "n": len(recs), "in": aggregate(ins, cfg), "oos": oos_agg,
-            "passed": check_pass(oos_agg, cfg),
+            "passed": check_pass(oos_agg, cfg), "factor_lift": factor_diagnosis(oos),
         }
     return out
+
+
+def run_real_backtest(cfg, start, end, symbols=None, step=2, tracks=("short", "mid")) -> dict:
+    symbol_candles, market_of, idx = load_data(cfg, start, end, symbols)
+    return backtest_from_data(cfg, symbol_candles, market_of, idx, step, tracks)
 
 
 def _fmt(x, pct=False):
@@ -89,6 +100,7 @@ def format_report(out: dict, cfg: SurgeConfig) -> str:
     for track, d in out["tracks"].items():
         K, X = _track_params(cfg, track)
         i, o = d["in"], d["oos"]
+        fl = d["factor_lift"]
         lines += [
             f"## {track} 트랙  (K={K}일, X=+{X * 100:.0f}%)",
             f"- 평가 표본: {d['n']}  (In {i['n']} / OOS {o['n']})",
@@ -98,6 +110,8 @@ def format_report(out: dict, cfg: SurgeConfig) -> str:
             f"- MFE/MAE (OOS): {_fmt(o['mfe_mae'])}",
             f"- 분위 적중률 OOS(낮은점수→높은점수): "
             + ", ".join(_fmt(x, True) for x in o["deciles"]),
+            f"- **팩터별 단독 lift (OOS, 최상위10% 분위):**",
+            "  " + "  ".join(f"{k} {_fmt(v)}" for k, v in fl.items()),
             f"- 통과: {'✅ PASS' if d['passed'] else '❌ FAIL'}",
             "",
         ]
@@ -107,7 +121,7 @@ def format_report(out: dict, cfg: SurgeConfig) -> str:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     _cfg = SurgeConfig()
-    _out = run_real_backtest(_cfg, "2019-01-01", "2026-06-01")
+    _out = run_real_backtest(_cfg, "2019-01-01", "2026-06-01", step=3)
     _report = format_report(_out, _cfg)
     print(_report)
     with open("backtest_report.md", "w", encoding="utf-8") as f:

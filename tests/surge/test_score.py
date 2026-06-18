@@ -43,18 +43,22 @@ def test_combine_all_ones_caps_at_100():
     assert total == 100.0  # max(100,100)+0.2*100 = 120 → 캡 100
 
 
-def test_combine_short_only():
-    f = {k: (1.0 if k in ("F1", "F2", "F3", "F4") else 0.0) for k in ALL}
-    short, mid, total = combine_scores(f, CFG)
-    assert short == 100.0 and mid == 0.0
-    assert total == 100.0  # max(100,0)+0.2*0
+def test_combine_short_factors_full():
+    # w_short에 들어간 팩터 전부 1.0 → short=100 (가중치 합=1, 키 비종속)
+    f = {k: 0.0 for k in ALL}
+    for k in CFG.w_short:
+        f[k] = 1.0
+    short, _, _ = combine_scores(f, CFG)
+    assert abs(short - 100.0) < 1e-9
 
 
 def test_combine_weighted_single_factor():
-    f = {k: (1.0 if k == "F1" else 0.0) for k in ALL}
-    short, mid, total = combine_scores(f, CFG)
-    assert abs(short - 30.0) < 1e-9   # w_short[F1]=0.30 → 30점
-    assert mid == 0.0
+    # w_short의 한 팩터만 1.0 → 그 가중치×100 (가중치값 비종속)
+    key, w = next(iter(CFG.w_short.items()))
+    f = {k: 0.0 for k in ALL}
+    f[key] = 1.0
+    short, _, _ = combine_scores(f, CFG)
+    assert abs(short - w * 100) < 1e-9
 
 
 def test_combine_zero():

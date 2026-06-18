@@ -16,6 +16,7 @@ from notify import (alert_start, alert_error, alert_counter_close,
                     alert_tp1, alert_tp2, alert_tp3, alert_sl, alert_be_sl,
                     alert_trailing_close, alert_time_stop)
 from kr_stock_monitor import kr_monitor
+from surge_monitor import surge_monitor
 
 # TTY 여부 감지 — 클라우드 서버는 터미널 없음
 IS_TTY = sys.stdout.isatty()
@@ -451,6 +452,7 @@ def main():
              cfg.symbol, cfg.leverage, cfg.risk_pct * 100, cfg.testnet)
     alert_start(cfg.symbol, cfg.leverage, cfg.risk_pct, scan_count=len(cfg.scan_symbols))
     kr_monitor.start()   # 한국주식 돌파 감지 백그라운드 시작
+    surge_monitor.start()  # 폭등 임박 일일 스캔 백그라운드 시작 (SURGE_ENABLED일 때만)
 
     if cfg.testnet:
         log.warning("TESTNET 모드 — 실제 거래 아님")

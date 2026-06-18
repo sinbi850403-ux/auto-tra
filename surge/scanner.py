@@ -63,6 +63,8 @@ def scan_universe(metas_candles, cfg: SurgeConfig,
 
 
 def top_alerts(results: List[ScanResult], cfg: SurgeConfig) -> List[ScanResult]:
-    """알림 대상: 지정 등급(S/A) 중 상위 N개."""
-    picked = [r for r in results if r.grade in cfg.alert_grades]
-    return picked[:cfg.top_n_alert]
+    """알림 대상: 점수 상위 alert_top_pct 분위, 최대 top_n_alert개. (results는 점수 내림차순)"""
+    if not results:
+        return []
+    k = max(1, int(len(results) * cfg.alert_top_pct))
+    return results[:min(k, cfg.top_n_alert)]

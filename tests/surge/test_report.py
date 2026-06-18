@@ -25,7 +25,8 @@ def test_card_contains_core_fields():
 
 
 def test_telegram_lists_alerts():
-    msg = format_telegram([sr(), sr(code="000660", name="SK하이닉스", grade="A")], CFG, "2026-06-18")
+    cfg = SurgeConfig(alert_top_pct=1.0)   # 둘 다 분위에 포함
+    msg = format_telegram([sr(), sr(code="000660", name="SK하이닉스", grade="A")], cfg, "2026-06-18")
     assert "폭등 임박 스캔" in msg
     assert "에코프로비엠" in msg and "SK하이닉스" in msg
     assert "자동매매 아님" in msg            # 면책 문구
@@ -35,10 +36,13 @@ def test_telegram_empty():
     assert "없음" in format_telegram([], CFG, "2026-06-18")
 
 
-def test_telegram_excludes_non_alert_grades():
-    # B등급은 알림에서 빠져야
-    msg = format_telegram([sr(code="111111", name="비등급", grade="B")], CFG, "2026-06-18")
-    assert "비등급" not in msg
+def test_telegram_excludes_low_score():
+    # 점수 낮은 종목은 상위 분위에서 빠진다 (results는 점수 내림차순 가정)
+    cfg = SurgeConfig(alert_top_pct=0.5)   # 상위 50%만
+    rs = [sr(code="HI", name="고득점", short=90, mid=85),
+          sr(code="LO", name="저득점", short=20, mid=10)]
+    msg = format_telegram(rs, cfg, "2026-06-18")
+    assert "고득점" in msg and "저득점" not in msg
 
 
 def test_save_csv_writes_all_rows(tmp_path):
