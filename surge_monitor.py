@@ -44,8 +44,9 @@ class SurgeMonitor:
                 log.warning("[폭등스캔] 실패: %s", e)
             time.sleep(600)                          # 10분마다 시각 체크
 
-    def start(self):
-        if not SURGE_ENABLED:
+    def start(self, force: bool = False):
+        """force=True면 SURGE_ENABLED 무관하게 켠다 (surge_app.py 전용 진입점용)."""
+        if not (force or SURGE_ENABLED):
             log.info("[폭등스캔] SURGE_ENABLED 미설정 — 비활성화")
             return
         if not self._running:
