@@ -67,18 +67,19 @@ def test_scan_universe_sorted_desc():
     assert totals == sorted(totals, reverse=True)   # 내림차순 정렬 보장
 
 
-def test_top_alerts_grade_and_count():
+def test_top_alerts_top_pct():
     rs = [
         ScanResult("A1", "s", "KOSPI", 1, 1, 1, 90, 80, 90, "S", {}, []),
         ScanResult("A2", "a", "KOSPI", 1, 1, 1, 75, 60, 75, "A", {}, []),
-        ScanResult("A3", "b", "KOSPI", 1, 1, 1, 60, 50, 60, "B", {}, []),  # 제외
+        ScanResult("A3", "b", "KOSPI", 1, 1, 1, 60, 50, 60, "B", {}, []),
     ]
+    # 3종목 × 상위 10% → 최상위 1종목만
     picked = top_alerts(rs, CFG)
-    assert [r.code for r in picked] == ["A1", "A2"]      # S/A만
+    assert [r.code for r in picked] == ["A1"]
 
 
-def test_top_alerts_respects_top_n():
-    cfg = SurgeConfig(top_n_alert=1)
+def test_top_alerts_respects_top_n_cap():
+    cfg = SurgeConfig(top_n_alert=1, alert_top_pct=1.0)  # 전체가 분위여도 top_n=1로 캡
     rs = [
         ScanResult("A1", "s", "KOSPI", 1, 1, 1, 90, 80, 90, "S", {}, []),
         ScanResult("A2", "a", "KOSPI", 1, 1, 1, 75, 60, 75, "A", {}, []),

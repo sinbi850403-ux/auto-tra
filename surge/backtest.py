@@ -56,6 +56,7 @@ def evaluate_symbol(candles: list, cfg: SurgeConfig, track: str = "short",
         out.append({
             "t": t, "ts": candles[t].get("ts", ""), "score": score,
             "grade": sr.grade, "label": lab.label, "mfe": lab.mfe, "mae": lab.mae,
+            "factors": sr.factors,
         })
     return out[::step] if step > 1 else out
 
@@ -87,9 +88,12 @@ def aggregate(records: List[dict], cfg: SurgeConfig) -> dict:
     for g in ("S", "A", "B", "C"):
         gr = [r for r in records if r["grade"] == g]
         grade_prec[g] = (sum(r["label"] for r in gr) / len(gr), len(gr)) if gr else (None, 0)
-    top = [r for r in records if r["grade"] in cfg.alert_grades]
-    top_prec = sum(r["label"] for r in top) / len(top) if top else None
-    lift = (top_prec / base_rate) if (top_prec is not None and base_rate > 0) else None
+    # 알림/통과 기준 = 점수 상위 alert_top_pct 분위 (실전 "상위 N% 알림"과 일치)
+    rs_by_score = sorted(records, key=lambda r: -r["score"])
+    k = max(1, int(len(rs_by_score) * cfg.alert_top_pct))
+    top = rs_by_score[:k]
+    top_prec = sum(r["label"] for r in top) / len(top)
+    lift = (top_prec / base_rate) if base_rate > 0 else None
     avg_mfe = _mean([r["mfe"] for r in records])
     avg_mae = _mean([r["mae"] for r in records])
     mfe_mae = (avg_mfe / avg_mae) if (avg_mae and avg_mae > 0) else None
@@ -134,3 +138,29 @@ def run_backtest(symbol_candles: dict, cfg: SurgeConfig, track: str = "short",
     return {"track": track, "n_total": len(all_records),
             "in_sample": aggregate(ins, cfg), "out_sample": oos_agg,
             "passed": check_pass(oos_agg, cfg), "records": all_records}
+
+
+# ------------------------------------------------------------------ #
+# 팩터별 단독 변별력 진단 — "어떤 팩터가 실제로 폭등을 선행하는가"
+# ------------------------------------------------------------------ #
+
+def factor_decile_lift(records: List[dict], factor_key: str, top_pct: float = 0.1):
+    """팩터값 상위 top_pct 분위의 폭등 적중률 / 전체 base rate.
+    >1.5면 그 팩터에 단독 변별력이 있다는 신호, ~1.0이면 무변별."""
+    rs = [r for r in records if r.get("factors") and factor_key in r["factors"]]
+    if not rs:
+        return None
+    rs.sort(key=lambda r: r["factors"][factor_key])
+    n = len(rs)
+    base = sum(r["label"] for r in rs) / n
+    top = rs[int(n * (1 - top_pct)):]
+    if not top or base == 0:
+        return None
+    top_rate = sum(r["label"] for r in top) / len(top)
+    return top_rate / base
+
+
+def factor_diagnosis(records: List[dict],
+                     keys=("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8")) -> dict:
+    """전 팩터의 단독 분위 lift를 한 번에 — 가중치 재설계의 근거."""
+    return {k: factor_decile_lift(records, k) for k in keys}

@@ -54,10 +54,13 @@ class SurgeConfig:
     obv_div_lookback: int = 20
 
     # ---------------- 점수 가중치 (제4.C부) ----------------
+    # 진단(backtest factor_diagnosis) 기반 재설계:
+    # F6 상대강도(lift 1.99)·F7 추세토대(1.87)가 주력, F2 거래량·F4 모멘텀 보조.
+    # F1/F5 미미·F3(0.78)/F8(0.64) 역효과 → 가중치에서 제외.
     w_short: dict = field(default_factory=lambda: {
-        "F1": 0.30, "F2": 0.30, "F3": 0.25, "F4": 0.15})
+        "F6": 0.30, "F7": 0.25, "F2": 0.20, "F4": 0.25})
     w_mid: dict = field(default_factory=lambda: {
-        "F5": 0.25, "F6": 0.30, "F7": 0.25, "F8": 0.20})
+        "F6": 0.35, "F7": 0.30, "F2": 0.15, "F4": 0.20})
     grade_cut: dict = field(default_factory=lambda: {
         "S": 85.0, "A": 70.0, "B": 55.0})
 
@@ -73,6 +76,7 @@ class SurgeConfig:
     # ---------------- 출력 (제7부) ----------------
     top_n_alert: int = 10
     alert_grades: tuple = ("S", "A")
+    alert_top_pct: float = 0.10        # 점수 상위 10%를 알림/통과 기준 (실전 운용과 일치)
 
     # 지표 워밍업: 이보다 짧은 종목은 스캔 제외 (1년)
     min_candles: int = 252

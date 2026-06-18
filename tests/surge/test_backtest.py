@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from surge.surge_config import SurgeConfig
 from surge.backtest import (
     label_surge, aggregate, decile_hit_rate, split_oos, check_pass,
-    evaluate_symbol, run_backtest,
+    evaluate_symbol, run_backtest, factor_decile_lift, factor_diagnosis,
 )
 
 
@@ -51,14 +51,14 @@ def test_label_invalid_when_future_short():
 
 
 # ---------------- aggregate ----------------
-def test_aggregate_base_rate_and_lift():
-    cfg = SurgeConfig()  # alert_grades=("S","A")
-    records = [rec(90, "S", 1), rec(88, "A", 1), rec(80, "A", 0),
-               rec(40, "C", 0), rec(30, "C", 0), rec(20, "C", 0), rec(10, "C", 0)]
+def test_aggregate_lift_uses_top_pct():
+    cfg = SurgeConfig()  # alert_top_pct=0.10
+    # 점수 상위 10%에 폭등이 집중 → 상위분위 precision / base = lift
+    records = [rec(score=i, grade="A", label=1 if i >= 90 else 0) for i in range(100)]
     agg = aggregate(records, cfg)
-    assert abs(agg["base_rate"] - 2 / 7) < 1e-9        # 폭등 2건 / 7건
-    assert abs(agg["top_precision"] - 2 / 3) < 1e-9    # S/A 3건 중 2건 적중
-    assert abs(agg["lift"] - (2 / 3) / (2 / 7)) < 1e-9  # ≈ 2.33
+    assert abs(agg["base_rate"] - 0.1) < 1e-9
+    assert abs(agg["top_precision"] - 1.0) < 1e-9   # 상위10%(score 90~99) 전부 폭등
+    assert abs(agg["lift"] - 10.0) < 1e-9
 
 
 def test_aggregate_empty_safe():
@@ -131,3 +131,24 @@ def test_run_backtest_smoke():
     assert res["n_total"] > 0
     assert res["in_sample"]["n"] > 0 and res["out_sample"]["n"] > 0
     assert isinstance(res["passed"], bool)
+
+
+# ---------------- 팩터별 변별력 진단 ----------------
+def test_factor_decile_lift_detects_signal():
+    # F1 값이 높을수록 폭등(label=1)이 집중 → 최상위 분위 lift 큼
+    records = [{"factors": {"F1": i / 100}, "label": 1 if i >= 90 else 0} for i in range(100)]
+    lift = factor_decile_lift(records, "F1")
+    assert lift is not None and lift > 1.5
+
+
+def test_factor_decile_lift_no_signal():
+    # F2가 label과 무관 → lift ≈ 1.0
+    records = [{"factors": {"F2": i / 100}, "label": i % 2} for i in range(100)]
+    lift = factor_decile_lift(records, "F2")
+    assert lift is not None and 0.7 < lift < 1.3
+
+
+def test_factor_diagnosis_covers_all_keys():
+    records = [{"factors": {f"F{j}": 0.5 for j in range(1, 9)}, "label": 0} for _ in range(20)]
+    diag = factor_diagnosis(records)
+    assert set(diag.keys()) == {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"}
