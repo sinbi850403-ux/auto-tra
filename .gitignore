@@ -7,3 +7,8 @@ logs/
 *.log
 bot_state.json
 bot_state.json.tmp
+
+# surge 스캐너 데이터/출력 (캐시·대용량)
+data/
+*.parquet
+scan_*.csv
