@@ -23,7 +23,7 @@ class SurgeConfig:
     new_listing_min_days: int = 60                 # 신규 상장 N일 미만 제외
     value_ma_period: int = 20
     exclude_limit_up_today: bool = True
-    limit_up_today_pct: float = 0.15               # 당일 +15%↑ 추격 금지
+    limit_up_today_pct: float = 0.07               # 당일 +7%↑ 추격 금지 ("아직 안 간 것" 위주 발굴)
 
     # ---------------- 팩터 파라미터 (제4부) ----------------
     # F1 변동성 수축
