@@ -14,7 +14,7 @@ class Config:
 
     # --- 거래 대상 ---
     symbol: str = field(default_factory=lambda: os.getenv("SYMBOL", "BTCUSDT"))
-    interval: str = "15"          # 15분봉 (진입 타이밍)
+    interval: str = "5"            # 5분봉 (진입 타이밍)
     htf_interval: str = "240"     # 4시간봉 (추세 방향)
     candle_limit: int = 300       # 캔들 수 (EMA200 계산에 충분)
 
@@ -43,8 +43,8 @@ class Config:
         default_factory=lambda: int(os.getenv("COOLDOWN_AFTER_LOSS_MIN", "30")))
 
     # --- TP 배율 (손절폭 기준) ---
-    tp1_r: float = 1.5   # TP1: 손절폭 1.5배
-    tp2_r: float = 3.0   # TP2: 손절폭 3배
+    tp1_r: float = 0.8   # TP1: 손절폭 0.8배 (5M 스캘핑 — 빠른 1차 청산)
+    tp2_r: float = 1.5   # TP2: 손절폭 1.5배 (5M 스캘핑 — 빠른 2차 청산)
     # TP3: Chandelier Exit 트레일링 청산 (고점 추종, 무제한)
 
     # --- Chandelier Exit 트레일링 스탑 (TP3) ---
@@ -73,7 +73,7 @@ class Config:
     # --- ATR 손절 ---
     atr_period: int = 20                 # ATR 기간 (사용자 지정)
     atr_sl_mult: float = 1.5             # SL = ATR × 1.5 (진입가 기준)
-    atr_vol_gate_pct: float = 0.03       # 15M ATR > 가격 × 3% → 극단 변동성, 진입 금지
+    atr_vol_gate_pct: float = 0.015      # 5M ATR > 가격 × 1.5% → 극단 변동성, 진입 금지
     vol_avg_len: int = 20                # 거래량 평균 기간
 
     # --- v3 손절 버퍼 (연속 손절 후 휩쏘 방지) ---
@@ -87,10 +87,10 @@ class Config:
     min_notional_usd: float = 2.0        # 명목가치 $2 미만 거래 거부 (수수료가 엣지 잠식)
 
     # --- v3 과매매 방지 ---
-    max_trades_per_day: int = 4          # UTC 일일 최대 진입 횟수
+    max_trades_per_day: int = 8          # UTC 일일 최대 진입 횟수
 
     # --- v3 시간손절 ---
-    time_stop_hours: float = 8.0         # TP1 미달성 8시간 경과 +
+    time_stop_hours: float = 2.0         # TP1 미달성 2시간 경과 +
     time_stop_pnl_pct: float = -0.005    # 가격이 진입가 대비 -0.5% 이하 → 논리 붕괴, 청산
 
     # --- v3 드로다운 사이징 (기본 OFF — $28 계좌에선 최소 수량 미달 위험) ---
@@ -100,7 +100,7 @@ class Config:
     risk_scale_floor: float = 0.25       # 바닥: 기본 리스크의 25%
 
     # --- 실행 주기 ---
-    check_interval_sec: int = 60  # 1분마다 신호 확인
+    check_interval_sec: int = 30  # 30초마다 신호 확인 (5M 스캘핑)
 
     def validate(self):
         import logging as _log
