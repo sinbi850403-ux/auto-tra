@@ -2,3 +2,10 @@ pybit==5.8.0
 python-dotenv==1.0.1
 schedule==1.2.2
 requests==2.32.3
+
+# 한국주식 폭등 임박 스캐너 (surge / surge_app.py)
+finance-datareader>=0.9.50
+pykrx>=1.0.45
+pandas>=2.0
+numpy>=1.24
+pyarrow>=14.0
