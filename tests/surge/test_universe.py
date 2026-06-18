@@ -98,3 +98,14 @@ def test_filter_universe_returns_codes():
         (meta(code="000660", is_managed=True), candles()),  # 관리종목 탈락
     ]
     assert filter_universe(items, CFG) == ["005930"]
+
+
+def test_prefilter_listings():
+    from surge.universe import prefilter_listings
+    listings = [
+        {"code": "A", "market_cap": 5e11, "amount": 5e9, "close": 50000},   # 통과
+        {"code": "B", "market_cap": 1e10, "amount": 5e9, "close": 50000},   # 시총 미달
+        {"code": "C", "market_cap": 5e11, "amount": 1e8, "close": 50000},   # 거래대금 미달
+        {"code": "D", "market_cap": 5e11, "amount": 5e9, "close": 500},     # 동전주
+    ]
+    assert [it["code"] for it in prefilter_listings(listings, CFG)] == ["A"]
