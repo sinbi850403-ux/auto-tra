@@ -240,3 +240,53 @@ def find_pullback_high(candles: list, ema50_series: List[float],
     return None
 
 
+# ------------------------------------------------------------------ #
+# SMA (단순이동평균)
+# ------------------------------------------------------------------ #
+
+def sma(values: List[float], period: int) -> List[float]:
+    """단순이동평균. 워밍업 구간(period 미만)은 부분평균으로 채워 길이를 맞춘다."""
+    out = []
+    for i in range(len(values)):
+        lo = max(0, i - period + 1)
+        window = values[lo:i + 1]
+        out.append(sum(window) / len(window))
+    return out
+
+
+# ------------------------------------------------------------------ #
+# OBV (On-Balance Volume) — 매집/분배 추적
+# ------------------------------------------------------------------ #
+
+def obv(candles: list) -> List[float]:
+    """누적 OBV. 종가 상승일 +거래량, 하락일 -거래량, 보합 유지. 첫 봉=0."""
+    out = [0.0]
+    for i in range(1, len(candles)):
+        c = candles[i]["close"]
+        pc = candles[i - 1]["close"]
+        v = candles[i]["volume"]
+        if c > pc:
+            out.append(out[-1] + v)
+        elif c < pc:
+            out.append(out[-1] - v)
+        else:
+            out.append(out[-1])
+    return out
+
+
+# ------------------------------------------------------------------ #
+# Percentile rank — 분위 정규화 (0~1)
+# ------------------------------------------------------------------ #
+
+def percentile_rank(value: float, window: List[float]) -> float:
+    """window 내에서 value 이하인 값의 비율 (0.0~1.0).
+
+    value가 분포의 최저면 ~0, 최고면 1.0. 빈 window는 중립 0.5.
+    F1 변동성수축: 1 - percentile_rank(현재밴드폭, 과거밴드폭) → 압축 정도.
+    """
+    if not window:
+        return 0.5
+    cnt = sum(1 for w in window if w <= value)
+    return cnt / len(window)
+
+
