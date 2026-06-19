@@ -1,0 +1,240 @@
+//@version=5
+// ════════════════════════════════════════════════════════════════════════
+//  폭등 임박 스캐너 (Surge Imminent Scanner)
+//  ----------------------------------------------------------------------
+//  설계 근거: auto-tra/surge 백테스트 검증 결과를 그대로 반영.
+//   · 단독 변별력(OOS lift)이 입증된 팩터에 가중치를 몰아준다:
+//       RS(상대강도) 1.78,  추세토대 1.70  → 핵심
+//       거래량 점화  1.30,  모멘텀   1.30  → 보조
+//       VCP(압축) 0.76, 박스 0.98          → "임박 타이밍"에만 사용(가중 낮음)
+//   · "이미 터진 종목"은 추격 금지(당일 급등 + 박스 과돌파 감점).
+//
+//  사용법
+//   1) 한국 종목 차트(일봉 D)에서 이 인디케이터를 추가.
+//   2) 코스닥 종목이면 입력의 "벤치마크 지수"를 KRX:KOSDAQ 로 변경.
+//   3) 전종목 발굴은 TradingView "Pine Screener"에 이 스크립트를 올려
+//      '폭등점수' 컬럼으로 정렬/필터(예: ≥ 68)하면 된다.
+//   4) 개별 차트에서는 🚀 화살표 + 배경색 + 우상단 대시보드로 판정.
+//  ※ 발굴/알림 도구일 뿐 매매 신호가 아니며, 판단·책임은 본인.
+// ════════════════════════════════════════════════════════════════════════
+indicator("폭등 임박 스캐너 🚀", "SURGE", overlay=true, max_labels_count=500)
+
+// ───────────────────────── 입력: 벤치마크 ─────────────────────────
+g1 = "① 벤치마크 / 상대강도"
+benchSym = input.symbol("KRX:KOSPI", "벤치마크 지수", group=g1,
+     tooltip="상대강도(RS) 기준 지수. 코스닥 종목이면 KRX:KOSDAQ 로 바꾸세요.")
+rsLen    = input.int(60, "RS 기간(거래일)", minval=10, maxval=250, group=g1)
+rsScale  = input.float(0.6, "RS 정규화 스케일", minval=0.05, step=0.05, group=g1,
+     tooltip="지수 대비 초과수익 ±(스케일/2)에서 0~1 만점. 작을수록 민감.")
+
+// ───────────────────────── 입력: 팩터 파라미터 ─────────────────────────
+g2 = "② 팩터 파라미터"
+volMaLen = input.int(20,  "거래량 이동평균", group=g2)
+ignMult  = input.float(3.0,"점화 배수(당일거래량/이평)", step=0.5, group=g2)
+boxLen   = input.int(60,  "박스 상단 기간", group=g2)
+bbLen    = input.int(20,  "볼린저 기간", group=g2)
+bbMult   = input.float(2.0,"볼린저 표준편차", step=0.5, group=g2)
+bbwLook  = input.int(126, "밴드폭 압축 비교기간(≈6개월)", group=g2)
+rsiLen   = input.int(14,  "RSI 기간", group=g2)
+
+// ───────────────────────── 입력: 가중치 (합 자동정규화) ─────────────────────────
+g3 = "③ 가중치 (검증 lift 비례 · 합은 자동정규화)"
+wRS    = input.float(28, "상대강도 RS",        minval=0, group=g3, tooltip="백테스트 단독 lift 1.78 — 최강 변별")
+wTrend = input.float(27, "추세토대(정배열)",    minval=0, group=g3, tooltip="lift 1.70")
+wVol   = input.float(18, "거래량 마름→점화",   minval=0, group=g3, tooltip="lift ~1.3")
+wMom   = input.float(15, "단기 모멘텀",         minval=0, group=g3, tooltip="lift ~1.3")
+wVcp   = input.float(7,  "변동성 압축(VCP)",    minval=0, group=g3, tooltip="단독 변별 약함 — 임박 타이밍 보조")
+wBox   = input.float(5,  "박스 돌파 임박",      minval=0, group=g3, tooltip="단독 변별 약함 — 임박 타이밍 보조")
+
+// ───────────────────────── 입력: 게이트 / 등급 ─────────────────────────
+g4 = "④ 게이트 / 등급"
+minValueEok = input.float(10, "최소 20일 평균 거래대금(억원)", group=g4)
+cutS = input.int(80, "S등급 컷", group=g4)
+cutA = input.int(68, "A등급 컷", group=g4)
+cutB = input.int(55, "B등급 컷", group=g4)
+chaseGuard = input.float(15, "당일 급등 추격금지(%)", group=g4,
+     tooltip="당일 상승률이 이 값 이상이면 이미 터진 것으로 보고 신호 제외")
+
+// ───────────────────────── 입력: 표시 ─────────────────────────
+g5 = "⑤ 표시"
+showDash = input.bool(true, "대시보드 표시", group=g5)
+dashPosSel = input.string("우상단", "대시보드 위치", group=g5,
+     options=["우상단", "좌상단", "우하단", "좌하단", "우중단", "좌중단"])
+showSig  = input.bool(true, "임박 신호 화살표(🚀)", group=g5)
+showBg   = input.bool(true, "임박 배경색", group=g5)
+
+// ───────────────────────── 입력: 캔들/구조 패턴 ─────────────────────────
+g6 = "⑥ 캔들/구조 패턴 (참고용 · 점수 미반영 · 미검증)"
+showPat = input.bool(true, "캔들/구조 패턴 표시", group=g6)
+pvLen   = input.int(10, "구조 스윙 피벗 길이", minval=3, group=g6,
+     tooltip="쌍바닥/쌍천장 판정용 스윙 고저점 길이. 클수록 큰 구조만.")
+
+// ════════════════════════ 지표 계산 ════════════════════════
+ema20  = ta.ema(close, 20)
+ema60  = ta.ema(close, 60)
+ema120 = ta.ema(close, 120)
+ema200 = ta.ema(close, 200)
+
+// ── F6 상대강도(RS): 지수 대비 rsLen일 초과수익 ──
+bench = request.security(benchSym, timeframe.period, close, lookahead=barmerge.lookahead_off)
+stockRet = close[rsLen] > 0 ? close / close[rsLen] - 1.0 : 0.0
+benchRet = bench[rsLen] > 0 ? bench / bench[rsLen] - 1.0 : 0.0
+rs = stockRet - benchRet
+rsScore = math.min(math.max(0.5 + rs / rsScale, 0.0), 1.0)
+
+// ── F7 추세토대: EMA200 위 + 정배열(60>120>200) + 52주고가 근접 ──
+aboveTrend = close > ema200
+stackUp    = ema60 > ema120 and ema120 > ema200
+high52     = ta.highest(high, 252)
+near52     = high52 > 0 and close / high52 >= 0.75
+trendScore = ((aboveTrend ? 1.0 : 0.0) + (stackUp ? 1.0 : 0.0) + (near52 ? 1.0 : 0.0)) / 3.0
+
+// ── F2 거래량 마름→점화: 직전이 말랐고(dryness) 당일 터지면(ignition) ──
+volMa    = ta.sma(volume, volMaLen)
+ignition = volMa > 0 ? math.min(volume / volMa / ignMult, 1.0) : 0.0
+priorVol = ta.sma(volume, 5)[1]          // 당일 제외 직전 5일 평균
+pastVol  = ta.sma(volume, 60)
+dryness  = pastVol > 0 ? math.min(math.max(1.0 - priorVol / pastVol, 0.0), 1.0) : 0.0
+volScore = 0.5 * dryness + 0.5 * ignition
+
+// ── F4 단기 모멘텀: RSI 50선 상향 + 단기 EMA 위 ──
+r    = ta.rsi(close, rsiLen)
+turn = (r[1] < 50 and r >= 50) ? 1.0 : (r > 50 ? 0.5 : 0.0)
+momScore = 0.6 * turn + 0.4 * (close > ema20 ? 1.0 : 0.0)
+
+// ── F1 변동성 수축(VCP): 밴드폭이 6개월 범위 하단이면 압축 완료 ──
+[bbMid, bbUp, bbLo] = ta.bb(close, bbLen, bbMult)
+bbw   = bbMid > 0 ? (bbUp - bbLo) / bbMid : 0.0
+bbwLo = ta.lowest(bbw, bbwLook)
+bbwHi = ta.highest(bbw, bbwLook)
+vcpScore = bbwHi > bbwLo ? math.min(math.max(1.0 - (bbw - bbwLo) / (bbwHi - bbwLo), 0.0), 1.0) : 0.0
+
+// ── F3 박스 상단 돌파 임박: 상단 -5% 이내면 만점, 과돌파는 추격 감점 ──
+boxHigh = ta.highest(high[1], boxLen)    // 현재봉 제외 직전 박스 상단
+dist = boxHigh > 0 ? (boxHigh - close) / boxHigh : 1.0
+boxScore = dist >= 0 ? math.min(math.max(1.0 - dist / 0.05, 0.0), 1.0) : math.min(math.max(1.0 - (-dist) / 0.03, 0.0), 1.0)
+
+// ════════════════════════ 게이트 & 점수 합성 ════════════════════════
+avgValue   = ta.sma(close * volume, 20)
+liquidOk   = avgValue >= minValueEok * 1e8
+baseFormed = (ta.highest(high, 60) - ta.lowest(low, 60)) / close < 0.40
+dayChg     = close[1] > 0 ? (close / close[1] - 1.0) * 100.0 : 0.0
+notChasing = dayChg < chaseGuard
+gate = (aboveTrend or baseFormed) and liquidOk and notChasing
+
+wSum = wRS + wTrend + wVol + wMom + wVcp + wBox
+raw  = wRS * rsScore + wTrend * trendScore + wVol * volScore + wMom * momScore + wVcp * vcpScore + wBox * boxScore
+score = (gate and wSum > 0) ? 100.0 * raw / wSum : 0.0
+
+grade = score >= cutS ? "S" : score >= cutA ? "A" : score >= cutB ? "B" : "C"
+gradeColor = grade == "S" ? color.red : grade == "A" ? color.orange : grade == "B" ? color.yellow : color.gray
+
+// ════════════════════════ 폭등 임박 트리거 ════════════════════════
+// 강한 토대(A+) + 압축 완료(VCP) + 점화 시작 + 박스 상단 근접 = "터지기 직전"
+imminent      = gate and score >= cutA and vcpScore >= 0.6 and ignition >= 0.5 and dist < 0.05 and dist >= -0.03
+imminentFresh = imminent and not imminent[1]
+
+// ════════════════════════ 시각화 ════════════════════════
+plotshape(showSig and imminentFresh, "임박 신호", shape.triangleup, location.belowbar,
+     color.new(color.lime, 0), size=size.small, text="🚀")
+bgcolor(showBg and imminent ? color.new(color.green, 88) : na, title="임박 구간")
+
+// 추세 EMA(맥락용)
+plot(ema60,  "EMA60",  color.new(color.aqua, 40))
+plot(ema200, "EMA200", color.new(color.gray, 30), linewidth=2)
+
+// Pine Screener / data window 용 값 (차트엔 그리지 않음)
+plot(score,        "폭등점수",   display=display.data_window)
+plot(rsScore*100,  "RS%",       display=display.data_window)
+plot(trendScore*100,"추세%",    display=display.data_window)
+plot(volScore*100, "거래량%",   display=display.data_window)
+
+// ════════════════════════ 캔들/구조 패턴 (참고용 · 점수 미반영 · 미검증) ════════════════════════
+// ⚠️ 백테스트로 검증한 팩터(F6·F7 등)와 달리 패턴류는 검증 전 — "참고 표시"로만 둔다.
+pBodyHi = math.max(open, close)
+pBodyLo = math.min(open, close)
+pBody   = pBodyHi - pBodyLo
+pUpTail = high - pBodyHi
+pDnTail = pBodyLo - low
+pAtr    = ta.atr(14)
+pBull   = close > open
+pBear   = close < open
+
+// 캔들 패턴
+patHammer  = pBody > 0 and pDnTail >= 2 * pBody and pUpTail <= pBody * 0.5 and close[1] < close[2]   // 망치(하락 후 아래꼬리)
+patStar    = pBody > 0 and pUpTail >= 2 * pBody and pDnTail <= pBody * 0.5 and close[1] > close[2]   // 유성(상승 후 위꼬리)
+patBullEng = pBull and close[1] < open[1] and close >= open[1] and open <= close[1]                  // 상승장악
+patBearEng = pBear and close[1] > open[1] and close <= open[1] and open >= close[1]                  // 하락장악
+patBigBull = pBull and pBody >= 1.5 * pAtr                                                            // 장대양봉
+patBigBear = pBear and pBody >= 1.5 * pAtr                                                            // 장대음봉
+
+// 구조 패턴 (스윙 피벗)
+pPh = ta.pivothigh(high, pvLen, pvLen)
+pPl = ta.pivotlow(low, pvLen, pvLen)
+var float lastPL = na
+var float prevPL = na
+var float lastPH = na
+var float prevPH = na
+if not na(pPl)
+    prevPL := lastPL
+    lastPL := pPl
+if not na(pPh)
+    prevPH := lastPH
+    lastPH := pPh
+patDblBottom = not na(prevPL) and not na(lastPL) and math.abs(lastPL - prevPL) / prevPL < 0.03 and close > lastPL  // 쌍바닥
+patDblTop    = not na(prevPH) and not na(lastPH) and math.abs(lastPH - prevPH) / prevPH < 0.03 and close < lastPH  // 쌍천장
+patNewHigh   = close > ta.highest(high[1], 252)                                                                    // 52주 신고가 돌파
+
+// 차트 마킹 — 상승계열 아래(초록), 하락계열 위(빨강), 구조 강조
+plotshape(showPat and patHammer,  "망치",     shape.triangleup,   location.belowbar, color.new(color.lime, 0),    size=size.tiny, text="망치")
+plotshape(showPat and patBullEng, "상승장악", shape.triangleup,   location.belowbar, color.new(color.green, 0),   size=size.tiny, text="장악↑")
+plotshape(showPat and patBigBull, "장대양봉", shape.triangleup,   location.belowbar, color.new(color.teal, 20),   size=size.tiny, text="대양")
+plotshape(showPat and patStar,    "유성",     shape.triangledown, location.abovebar, color.new(color.red, 0),     size=size.tiny, text="유성")
+plotshape(showPat and patBearEng, "하락장악", shape.triangledown, location.abovebar, color.new(color.maroon, 0),  size=size.tiny, text="장악↓")
+plotshape(showPat and patBigBear, "장대음봉", shape.triangledown, location.abovebar, color.new(color.orange, 20), size=size.tiny, text="대음")
+plotshape(showPat and patDblBottom and not patDblBottom[1], "쌍바닥",      shape.diamond, location.belowbar, color.new(color.aqua, 0),    size=size.small, text="W바닥")
+plotshape(showPat and patNewHigh   and not patNewHigh[1],   "신고가돌파",  shape.flag,    location.abovebar, color.new(color.blue, 0),    size=size.tiny,  text="신고가")
+plotshape(showPat and patDblTop    and not patDblTop[1],    "쌍천장",      shape.diamond, location.abovebar, color.new(color.fuchsia, 0), size=size.small, text="M천장")
+
+// 대시보드용 최근 패턴 텍스트/색
+candleText  = patBullEng ? "상승장악" : patHammer ? "망치" : patBigBull ? "장대양봉" : patBearEng ? "하락장악" : patStar ? "유성" : patBigBear ? "장대음봉" : "-"
+structText  = patDblBottom ? "쌍바닥" : patNewHigh ? "신고가돌파" : patDblTop ? "쌍천장" : "-"
+candleColor = (patBullEng or patHammer or patBigBull) ? color.lime : (patBearEng or patStar or patBigBear) ? color.red : color.gray
+structColor = (patDblBottom or patNewHigh) ? color.lime : patDblTop ? color.red : color.gray
+
+// ── 대시보드 ──
+bar5(v) =>                       // 0~1 → ■ 막대 5칸 (str.repeat 의존 없이 안전하게)
+    n = int(math.round(math.min(math.max(v, 0.0), 1.0) * 5))
+    n <= 0 ? "□□□□□" : n == 1 ? "■□□□□" : n == 2 ? "■■□□□" : n == 3 ? "■■■□□" : n == 4 ? "■■■■□" : "■■■■■"
+
+dashPos = dashPosSel == "우상단" ? position.top_right : dashPosSel == "좌상단" ? position.top_left : dashPosSel == "우하단" ? position.bottom_right : dashPosSel == "좌하단" ? position.bottom_left : dashPosSel == "우중단" ? position.middle_right : position.middle_left
+var table dash = table.new(dashPos, 2, 11, border_width=1, frame_width=1, frame_color=color.gray)
+if showDash and barstate.islast
+    bg = color.new(color.black, 10)
+    table.cell(dash, 0, 0, "폭등 임박", text_color=color.white, bgcolor=color.new(color.purple, 0), text_size=size.normal)
+    table.cell(dash, 1, 0, str.tostring(score, "#.0") + "  [" + grade + "]", text_color=color.white, bgcolor=gradeColor, text_size=size.normal)
+    table.cell(dash, 0, 1, "상대강도 RS",  text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 1, bar5(rsScore),    text_color=color.aqua,   bgcolor=bg)
+    table.cell(dash, 0, 2, "추세토대",       text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 2, bar5(trendScore), text_color=color.aqua,   bgcolor=bg)
+    table.cell(dash, 0, 3, "거래량 점화",    text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 3, bar5(volScore),   text_color=color.aqua,   bgcolor=bg)
+    table.cell(dash, 0, 4, "모멘텀",         text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 4, bar5(momScore),   text_color=color.aqua,   bgcolor=bg)
+    table.cell(dash, 0, 5, "VCP 압축",       text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 5, bar5(vcpScore),   text_color=color.yellow, bgcolor=bg)
+    table.cell(dash, 0, 6, "박스 돌파임박",  text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 6, bar5(boxScore),   text_color=color.yellow, bgcolor=bg)
+    table.cell(dash, 0, 7, "게이트",         text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 7, gate ? "통과 ✅" : "탈락 ❌", text_color=gate ? color.lime : color.red, bgcolor=bg)
+    table.cell(dash, 0, 8, "임박 트리거",    text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 8, imminent ? "🚀 발동" : "대기", text_color=imminent ? color.lime : color.gray, bgcolor=bg)
+    table.cell(dash, 0, 9, "캔들패턴",       text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 9, candleText,       text_color=candleColor, bgcolor=bg)
+    table.cell(dash, 0, 10, "구조패턴",      text_color=color.white, bgcolor=bg)
+    table.cell(dash, 1, 10, structText,      text_color=structColor, bgcolor=bg)
+
+// ════════════════════════ 알림 ════════════════════════
+alertcondition(imminentFresh, "폭등 임박 신호", "🚀 폭등 임박: {{ticker}} (점수/등급은 차트 대시보드 확인)")
+if imminentFresh
+    alert("🚀 폭등 임박 " + syminfo.ticker + " | 점수 " + str.tostring(score, "#.0") + " [" + grade + "]", alert.freq_once_per_bar_close)
