@@ -48,14 +48,14 @@ def analyze(candles_15m: list, cfg: Config,
             candles_4h: list = None,
             consecutive_losses: int = 0) -> Optional[Signal]:
 
-    if len(candles_15m) < 250:
-        log.debug("15M 캔들 부족 — 스킵")
-        return None
-    if not candles_4h or len(candles_4h) < 210:
+    if len(candles_15m) < 100:
         log.debug("4H 캔들 부족 — 스킵")
         return None
+    if not candles_4h or len(candles_4h) < 100:
+        log.debug("Daily 캔들 부족 — 스킵")
+        return None
 
-    # ── 4시간봉 추세 필터 ─────────────────────────────────────────
+    # ── 일봉 추세 필터 ────────────────────────────────────────────
     closes_4h = [c["close"] for c in candles_4h]
     ema50_4h  = ema(closes_4h, cfg.ema_fast)[-1]
     ema200_4h = ema(closes_4h, cfg.ema_slow)[-1]
@@ -64,7 +64,7 @@ def analyze(candles_15m: list, cfg: Config,
 
     # ADX 추세 강도 확인 — 횡보장 진입 차단
     if adx_4h < cfg.adx_threshold:
-        log.debug("4H ADX=%.1f < %.0f — 추세 없음, 스킵", adx_4h, cfg.adx_threshold)
+        log.debug("Daily ADX=%.1f < %.0f — 추세 없음, 스킵", adx_4h, cfg.adx_threshold)
         return None
 
     htf_bull = ema50_4h > ema200_4h
