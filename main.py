@@ -77,7 +77,7 @@ def draw_dashboard(cfg):
     print(f"{BOLD}{CYAN}")
     print("  ╔══════════════════════════════════════════╗")
     print("  ║        바이비트 자동 선물 봇              ║")
-    print("  ║  4H EMA추세 + 15M 눌림목 | TP 1R/2R/트레일 ║")
+    print("  ║  Daily추세 + 4H BB스퀴즈 | TP 2R/5R/트레일  ║")
     print("  ╚══════════════════════════════════════════╝")
     print(f"{RESET}")
     print(f"  {WHITE}현재 시각  {RESET} {now}")

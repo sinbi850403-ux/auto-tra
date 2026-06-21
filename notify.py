@@ -36,9 +36,9 @@ def alert_entry(direction: str, entry: float,
         f"진입가: <b>${entry:,.4f}</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"🛑 SL:  ${sl:,.4f}\n"
-        f"🎯 TP1: ${tp1:,.4f}  (1R)\n"
-        f"🎯 TP2: ${tp2:,.4f}  (2R)\n"
-        f"🏆 TP3: EMA50 트레일링\n"
+        f"🎯 TP1: ${tp1:,.4f}  (2R)\n"
+        f"🎯 TP2: ${tp2:,.4f}  (5R)\n"
+        f"🏆 TP3: Chandelier Exit 트레일링\n"
         f"━━━━━━━━━━━━━━\n"
         f"수량: {qty} {coin}  |  잔고: ${balance:.2f}"
     )
@@ -148,11 +148,11 @@ def alert_start(symbol: str, leverage: int, risk_pct: float, scan_count: int = 1
     else:
         symbol_text = symbol
     send(
-        f"🤖 <b>오토선물봇 시작 (v3)</b>\n"
+        f"🤖 <b>오토선물봇 시작 (v4)</b>\n"
         f"심볼: {symbol_text}\n"
         f"레버리지: {leverage}x\n"
         f"리스크: {risk_pct*100:.1f}%\n"
-        f"전략: 4H EMA50/200 추세 + 15M EMA50 눌림목\n"
-        f"게이트: 거래량·추격금지·ATR플로어·펀딩비·변동성\n"
-        f"TP: 1R/2R + EMA50 트레일링 | 시간손절 8h | 일일 4회 한도"
+        f"전략: Daily 추세 + 4H BB스퀴즈 돌파 (스윙)\n"
+        f"게이트: 거래량·ATR변동성·ADX25·펀딩비\n"
+        f"TP: 2R/5R + Chandelier 트레일링 | 시간손절 72h | 일일 2회 한도"
     )
