@@ -121,7 +121,7 @@ class Config:
         if lev_sl >= self.lev_sl_safety_limit:
             _logger.warning(
                 "⚠️ 레버리지(%dx) × 최대SL폭(%.1f%%) = %.2f — SL이 BB 안쪽에 잡히면 "
-                "청산 전에 손절이 동작하지 않을 수 있습니다. 실제 SL은 보통 2~3%대입니다.",
+                "청산 전에 손절이 동작하지 않을 수 있습니다. 실제 SL은 보통 2~3%%%%대입니다.",
                 self.leverage, self.sl_max_pct * 100, lev_sl
             )
 
