@@ -14,8 +14,8 @@ class Config:
 
     # --- 거래 대상 ---
     symbol: str = field(default_factory=lambda: os.getenv("SYMBOL", "BTCUSDT"))
-    interval: str = "5"            # 5분봉 (진입 타이밍)
-    htf_interval: str = "240"     # 4시간봉 (추세 방향)
+    interval: str = "240"          # 4시간봉 (진입 타이밍 — 스윙)
+    htf_interval: str = "D"       # 일봉 (추세 방향 — 스윙)
     candle_limit: int = 300       # 캔들 수 (EMA200 계산에 충분)
 
     # --- 멀티 종목 스캐너 ---
@@ -43,8 +43,8 @@ class Config:
         default_factory=lambda: int(os.getenv("COOLDOWN_AFTER_LOSS_MIN", "30")))
 
     # --- TP 배율 (손절폭 기준) ---
-    tp1_r: float = 0.8   # TP1: 손절폭 0.8배 (5M 스캘핑 — 빠른 1차 청산)
-    tp2_r: float = 1.5   # TP2: 손절폭 1.5배 (5M 스캘핑 — 빠른 2차 청산)
+    tp1_r: float = 2.0   # TP1: 손절폭 2배 (스윙 — 충분한 수익 확보)
+    tp2_r: float = 5.0   # TP2: 손절폭 5배 (스윙 — 큰 추세 탐)
     # TP3: Chandelier Exit 트레일링 청산 (고점 추종, 무제한)
 
     # --- Chandelier Exit 트레일링 스탑 (TP3) ---
@@ -59,21 +59,21 @@ class Config:
     bb_period: int = 20              # 볼린저밴드 기간
     bb_std: float = 2.0              # 볼린저밴드 표준편차 배수
     squeeze_pct: float = 0.6         # 스퀴즈 임계값 (평균 BB폭의 60% 이하)
-    squeeze_min_bars: int = 3        # 스퀴즈 최소 지속 캔들 수
+    squeeze_min_bars: int = 5        # 스퀴즈 최소 지속 캔들 수 (4H 기준 20시간)
     vol_mult: float = 1.5            # 진입 거래량 배율 (20봉 평균 대비)
     rsi_period: int = 14             # RSI 기간
 
     # --- 공통 필터 ---
-    sl_max_pct: float = 0.02         # SL 최대 거리 2% 초과 시 진입 금지 (손실 빠르게 차단)
+    sl_max_pct: float = 0.05         # SL 최대 거리 5% (스윙 — 4H ATR은 더 큼)
 
     # --- 추세 추종 필터 ---
     adx_period: int = 14             # ADX 계산 기간
-    adx_threshold: float = 20.0      # 4H ADX < 20 → 추세 없음 → 진입 금지
+    adx_threshold: float = 25.0      # Daily ADX < 25 → 추세 없음 → 진입 금지 (스윙 기준 강화)
 
     # --- ATR 손절 ---
     atr_period: int = 20                 # ATR 기간 (사용자 지정)
-    atr_sl_mult: float = 1.5             # SL = ATR × 1.5 (진입가 기준)
-    atr_vol_gate_pct: float = 0.015      # 5M ATR > 가격 × 1.5% → 극단 변동성, 진입 금지
+    atr_sl_mult: float = 2.0             # SL = ATR × 2.0 (스윙 — 더 여유있는 SL)
+    atr_vol_gate_pct: float = 0.05       # 4H ATR > 가격 × 5% → 극단 변동성, 진입 금지
     vol_avg_len: int = 20                # 거래량 평균 기간
 
     # --- v3 손절 버퍼 (연속 손절 후 휩쏘 방지) ---
@@ -87,11 +87,11 @@ class Config:
     min_notional_usd: float = 2.0        # 명목가치 $2 미만 거래 거부 (수수료가 엣지 잠식)
 
     # --- v3 과매매 방지 ---
-    max_trades_per_day: int = 8          # UTC 일일 최대 진입 횟수
+    max_trades_per_day: int = 2          # UTC 일일 최대 진입 횟수 (스윙 — 선별적 진입)
 
     # --- v3 시간손절 ---
-    time_stop_hours: float = 2.0         # TP1 미달성 2시간 경과 +
-    time_stop_pnl_pct: float = -0.005    # 가격이 진입가 대비 -0.5% 이하 → 논리 붕괴, 청산
+    time_stop_hours: float = 72.0        # TP1 미달성 72시간(3일) 경과 +
+    time_stop_pnl_pct: float = -0.02    # 가격이 진입가 대비 -2% 이하 → 논리 붕괴, 청산
 
     # --- v3 드로다운 사이징 (기본 OFF — $28 계좌에선 최소 수량 미달 위험) ---
     risk_scale_enabled: bool = field(
@@ -100,7 +100,7 @@ class Config:
     risk_scale_floor: float = 0.25       # 바닥: 기본 리스크의 25%
 
     # --- 실행 주기 ---
-    check_interval_sec: int = 30  # 30초마다 신호 확인 (5M 스캘핑)
+    check_interval_sec: int = 300 # 5분마다 신호 확인 (4H 스윙)
 
     def validate(self):
         import logging as _log
